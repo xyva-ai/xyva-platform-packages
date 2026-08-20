@@ -88,7 +88,7 @@ jobs:
           test "$(node -p "require('./packages/bridge-types/package.json').version")" = "0.1.1"
           test "$(node -p "require('./packages/bridge-browser/package.json').version")" = "0.1.0"
           test "$(node -p "require('./packages/agent/package.json').version")" = "0.1.13"
-          sha256sum release/*.tgz > release/SHA256SUMS
+          (cd release && sha256sum *.tgz > SHA256SUMS)
       - id: upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
