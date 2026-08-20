@@ -82,18 +82,18 @@ jobs:
           NODE
       - name: Pack exact immutable chain
         run: |
-          mkdir .release
-          for package in contracts bridge-types bridge-browser agent; do npm pack --workspace "@xyva/$package" --pack-destination .release --ignore-scripts; done
+          mkdir release
+          for package in contracts bridge-types bridge-browser agent; do npm pack --workspace "@xyva/$package" --pack-destination release --ignore-scripts; done
           test "$(node -p "require('./packages/contracts/package.json').version")" = "0.1.0"
           test "$(node -p "require('./packages/bridge-types/package.json').version")" = "0.1.1"
           test "$(node -p "require('./packages/bridge-browser/package.json').version")" = "0.1.0"
           test "$(node -p "require('./packages/agent/package.json').version")" = "0.1.13"
-          sha256sum .release/*.tgz > .release/SHA256SUMS
+          sha256sum release/*.tgz > release/SHA256SUMS
       - id: upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: npm-package-chain-${{ inputs.source_sha }}
-          path: .release
+          path: release
           if-no-files-found: error
           retention-days: 90
 
@@ -136,9 +136,9 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: npm-package-chain-${{ inputs.source_sha }}
-          path: .release
+          path: release
       - run: sha256sum --check SHA256SUMS && npm publish xyva-contracts-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-bridge-types-0.1.1.tgz --tag next --ignore-scripts && npm publish xyva-bridge-browser-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-agent-0.1.13.tgz --tag next --ignore-scripts
-        working-directory: .release
+        working-directory: release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
 
@@ -182,6 +182,6 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: npm-package-chain-${{ inputs.source_sha }}
-          path: .release
+          path: release
       - run: test -z "${NODE_AUTH_TOKEN:-}" && sha256sum --check SHA256SUMS && npm publish xyva-contracts-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-bridge-types-0.1.1.tgz --tag next --ignore-scripts && npm publish xyva-bridge-browser-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-agent-0.1.13.tgz --tag next --ignore-scripts
-        working-directory: .release
+        working-directory: release
