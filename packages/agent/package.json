@@ -1,0 +1,62 @@
+{
+  "name": "@xyva/agent",
+  "version": "0.1.13",
+  "description": "Local test agent for xyva.ai.",
+  "private": false,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xyva-ai/xyva-platform-packages.git",
+    "directory": "packages/agent"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "bin": {
+    "agent": "dist/cli.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@axe-core/playwright": "4.11.3",
+    "@xyva/bridge-types": "0.1.1",
+    "@xyva/contracts": "0.1.0",
+    "body-parser": "2.3.0",
+    "chalk": "5.6.2",
+    "commander": "14.0.3",
+    "cors": "2.8.6",
+    "express": "5.2.1",
+    "open": "10.2.0",
+    "playwright": "1.62.0",
+    "ws": "8.21.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/ws": "^8.18.1",
+    "tsup": "^8.5.0",
+    "tsx": "^4.20.6"
+  },
+  "scripts": {
+    "build": "npm run build --workspace @xyva/contracts && npm run build --workspace @xyva/bridge-types && tsup src/index.ts src/cli.ts --format esm --dts --outDir dist --clean --external playwright --external playwright-core --external chromium-bidi --external @axe-core/playwright --external axe-core --external @xyva/contracts",
+    "dev": "npm run build --workspace @xyva/bridge-types && tsx src/cli.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  }
+}

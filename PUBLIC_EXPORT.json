@@ -1,0 +1,35 @@
+{
+  "formatVersion": 1,
+  "profile": "review-only",
+  "publicationReady": false,
+  "blockers": [
+    "Explicit approval to disclose the Swarms internal source module and reviewed staging configuration is absent.",
+    "A pinned and attested public Git root commit is absent.",
+    "GitHub Private Vulnerability Reporting and Security Advisories must be enabled before public release.",
+    "External public repository settings and npm publication are not authorized."
+  ],
+  "sourceSha": "6995407790dea3cf3fc38214619fa682342589f0",
+  "manifestSha256": "701b31b9638077934206f2a8b5b4a9353be4ae966288aaa3afe70a536432563c",
+  "transformations": [
+    {
+      "path": "packages/contracts/package.json",
+      "repositoryUrl": "git+https://github.com/xyva-ai/xyva-platform-packages.git",
+      "enginesNode": ">=22"
+    },
+    {
+      "path": "packages/bridge-types/package.json",
+      "repositoryUrl": "git+https://github.com/xyva-ai/xyva-platform-packages.git",
+      "enginesNode": ">=22"
+    },
+    {
+      "path": "packages/bridge-browser/package.json",
+      "repositoryUrl": "git+https://github.com/xyva-ai/xyva-platform-packages.git",
+      "enginesNode": ">=22"
+    },
+    {
+      "path": "packages/agent/package.json",
+      "repositoryUrl": "git+https://github.com/xyva-ai/xyva-platform-packages.git",
+      "enginesNode": ">=22"
+    }
+  ]
+}

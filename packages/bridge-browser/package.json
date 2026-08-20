@@ -1,0 +1,50 @@
+{
+  "name": "@xyva/bridge-browser",
+  "version": "0.1.0",
+  "description": "Browser-only authenticated WebSocket transport for the XYVA bridge protocol.",
+  "private": false,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xyva-ai/xyva-platform-packages.git",
+    "directory": "packages/bridge-browser"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "types": "./dist/index.d.ts",
+  "module": "./dist/index.js",
+  "browser": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "browser": "./dist/index.js",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@xyva/bridge-types": "0.1.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "vitest": "4.1.10"
+  },
+  "scripts": {
+    "build": "npm run build --workspace @xyva/bridge-types && tsup src/index.ts --format esm --platform browser --dts --outDir dist --clean --external @xyva/bridge-types",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && vitest run -c vitest.config.ts",
+    "prepublishOnly": "npm run build && npm run test"
+  }
+}
