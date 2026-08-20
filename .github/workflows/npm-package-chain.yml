@@ -70,10 +70,14 @@ jobs:
             ["bridge-browser", "@xyva/bridge-browser", "0.1.0", { "@xyva/bridge-types": "0.1.1" }],
             ["agent", "@xyva/agent", "0.1.13", { "@xyva/contracts": "0.1.0", "@xyva/bridge-types": "0.1.1" }],
           ]
+          const normalizeDependencies = (entries) => Object.fromEntries(
+            [...entries].sort(([left], [right]) => left.localeCompare(right)),
+          )
           for (const [directory, name, version, dependencies] of expected) {
             const manifest = JSON.parse(fs.readFileSync(`packages/${directory}/package.json`, "utf8"))
-            const internal = Object.fromEntries(Object.entries(manifest.dependencies ?? {}).filter(([key]) => key.startsWith("@xyva/")))
-            if (manifest.name !== name || manifest.version !== version || manifest.repository?.url !== "git+https://github.com/xyva-ai/xyva-platform-packages.git" || JSON.stringify(internal) !== JSON.stringify(dependencies)) throw new Error(`Unexpected immutable contract: ${directory}`)
+            const internal = normalizeDependencies(Object.entries(manifest.dependencies ?? {}).filter(([key]) => key.startsWith("@xyva/")))
+            const expectedDependencies = normalizeDependencies(Object.entries(dependencies))
+            if (manifest.name !== name || manifest.version !== version || manifest.repository?.url !== "git+https://github.com/xyva-ai/xyva-platform-packages.git" || JSON.stringify(internal) !== JSON.stringify(expectedDependencies)) throw new Error(`Unexpected immutable contract: ${directory}`)
           }
           NODE
       - name: Pack exact immutable chain
