@@ -1,11 +1,12 @@
 # XYVA Platform Packages
 
 This repository is the public, historyless source home for shared XYVA npm packages.
-The current contents are a review candidate and **are not published**. Do not rely
-on them as a released package, compatibility promise, or service offer.
+The reviewed Alpha package chain is publicly available from npm. It is an early
+compatibility surface, not a hosted service or a stable-version promise. Pin the
+exact versions below; do not use an unversioned install during the Alpha.
 
-Before any public release, maintainers must enable GitHub Private Vulnerability
-Reporting so the Security Advisories flow described in `SECURITY.md` is usable.
+GitHub Private Vulnerability Reporting and the Security Advisories flow described
+in `SECURITY.md` are enabled for responsible disclosure.
 
 The candidate contains four publishable workspaces:
 
@@ -29,7 +30,24 @@ Deep scans can enter synthetic security-test strings into forms and may submit
 those forms. Use a disposable, non-production target with test accounts and
 review the selected scan preset before execution.
 
-## Candidate verification
+## Alpha packages
+
+The immutable Alpha chain was published in dependency order:
+
+```sh
+npm install @xyva/contracts@0.1.0
+npm install @xyva/bridge-types@0.1.1
+npm install @xyva/bridge-browser@0.1.0
+npm install @xyva/agent@0.1.13
+```
+
+The release workflow selected the `next` channel and never selected `latest`.
+For the two newly created package names, npm also exposes its required initial
+`latest` alias to the same sole version. Existing `latest` aliases for
+`@xyva/bridge-types` and `@xyva/agent` were not moved. Alpha consumers must use
+the exact versions above or explicitly select `next`.
+
+## Source verification
 
 Use Node.js 22 or 24 and the exact npm version used by CI:
 
@@ -39,7 +57,7 @@ npm ci
 npm run verify:public
 ```
 
-Only test data and local configuration belong in a candidate checkout. Never add
+Only test data and local configuration belong in a checkout. Never add
 credentials, production output, customer data, or runtime logs.
 
 ## License
