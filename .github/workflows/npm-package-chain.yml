@@ -51,9 +51,13 @@ jobs:
           test "$RELEASE_CONFIRMATION" = "PUBLISH_NEXT_CHAIN"
           case "$RELEASE_MODE" in bootstrap) test "$TRUST_CONFIRMATION" = "BOOTSTRAP_IRREVERSIBLE" ;; oidc) test "$TRUST_CONFIRMATION" = "OIDC_TRUST_CONFIGURED" ;; *) exit 1 ;; esac
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with: { persist-credentials: false, fetch-depth: 1 }
+        with:
+          persist-credentials: false
+          fetch-depth: 1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with: { node-version: "24.18.0", registry-url: https://registry.npmjs.org }
+        with:
+          node-version: "24.18.0"
+          registry-url: https://registry.npmjs.org
       - run: npm install --global npm@11.5.1 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund && npm run verify:public
       - name: Verify immutable public package contracts
@@ -83,61 +87,97 @@ jobs:
           sha256sum .release/*.tgz > .release/SHA256SUMS
       - id: upload
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with: { name: npm-package-chain-${{ inputs.source_sha }}, path: .release, if-no-files-found: error, retention-days: 90 }
+        with:
+          name: npm-package-chain-${{ inputs.source_sha }}
+          path: .release
+          if-no-files-found: error
+          retention-days: 90
 
   publish_bootstrap:
     if: inputs.publish_mode == 'bootstrap'
     needs: prepare_next
     runs-on: ubuntu-24.04
-    environment: { name: npm-bootstrap }
-    permissions: { contents: read }
+    environment:
+      name: npm-bootstrap
+    permissions:
+      contents: read
     steps:
       - name: Reject non-GitHub-hosted execution
         if: runner.environment != 'github-hosted'
         run: exit 1
       - name: Require npm-bootstrap sentinel
-        env: { XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }} }
+        env:
+          XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }}
         run: test "$XYVA_NPM_ENVIRONMENT_GUARD" = "xyva-npm-bootstrap-v1"
       - name: Revalidate exact publication authority
-        env: { APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}, RELEASE_CONFIRMATION: ${{ inputs.confirmation }}, TRUST_CONFIRMATION: ${{ inputs.trust_confirmation }} }
+        env:
+          APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+          TRUST_CONFIRMATION: ${{ inputs.trust_confirmation }}
         run: test "$GITHUB_REPOSITORY" = "xyva-ai/xyva-platform-packages" && test "$GITHUB_REF" = "refs/heads/main" && test "$GITHUB_SHA" = "$APPROVED_SOURCE_SHA" && test "$RELEASE_CONFIRMATION" = "PUBLISH_NEXT_CHAIN" && test "$TRUST_CONFIRMATION" = "BOOTSTRAP_IRREVERSIBLE"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with: { persist-credentials: false, fetch-depth: 1 }
+        with:
+          persist-credentials: false
+          fetch-depth: 1
       - run: node scripts/release/verify-npm-environment-policy.mjs
-        env: { GITHUB_ENVIRONMENT_NAME: npm-bootstrap, GITHUB_TOKEN: ${{ github.token }}, XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }} }
+        env:
+          GITHUB_ENVIRONMENT_NAME: npm-bootstrap
+          GITHUB_TOKEN: ${{ github.token }}
+          XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with: { node-version: "24.18.0", registry-url: https://registry.npmjs.org }
+        with:
+          node-version: "24.18.0"
+          registry-url: https://registry.npmjs.org
       - run: npm install --global npm@11.5.1 --ignore-scripts --no-audit --no-fund
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with: { name: npm-package-chain-${{ inputs.source_sha }}, path: .release }
+        with:
+          name: npm-package-chain-${{ inputs.source_sha }}
+          path: .release
       - run: sha256sum --check SHA256SUMS && npm publish xyva-contracts-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-bridge-types-0.1.1.tgz --tag next --ignore-scripts && npm publish xyva-bridge-browser-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-agent-0.1.13.tgz --tag next --ignore-scripts
         working-directory: .release
-        env: { NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }} }
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
 
   publish_oidc:
     if: inputs.publish_mode == 'oidc'
     needs: prepare_next
     runs-on: ubuntu-24.04
-    environment: { name: npm-publish }
-    permissions: { contents: read, id-token: write }
+    environment:
+      name: npm-publish
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Reject non-GitHub-hosted execution
         if: runner.environment != 'github-hosted'
         run: exit 1
       - name: Require npm-publish sentinel
-        env: { XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }} }
+        env:
+          XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }}
         run: test "$XYVA_NPM_ENVIRONMENT_GUARD" = "xyva-npm-publish-v1"
       - name: Revalidate exact publication authority
-        env: { APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}, RELEASE_CONFIRMATION: ${{ inputs.confirmation }}, TRUST_CONFIRMATION: ${{ inputs.trust_confirmation }} }
+        env:
+          APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+          TRUST_CONFIRMATION: ${{ inputs.trust_confirmation }}
         run: test "$GITHUB_REPOSITORY" = "xyva-ai/xyva-platform-packages" && test "$GITHUB_REF" = "refs/heads/main" && test "$GITHUB_SHA" = "$APPROVED_SOURCE_SHA" && test "$RELEASE_CONFIRMATION" = "PUBLISH_NEXT_CHAIN" && test "$TRUST_CONFIRMATION" = "OIDC_TRUST_CONFIGURED"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with: { persist-credentials: false, fetch-depth: 1 }
+        with:
+          persist-credentials: false
+          fetch-depth: 1
       - run: node scripts/release/verify-npm-environment-policy.mjs
-        env: { GITHUB_ENVIRONMENT_NAME: npm-publish, GITHUB_TOKEN: ${{ github.token }}, XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }} }
+        env:
+          GITHUB_ENVIRONMENT_NAME: npm-publish
+          GITHUB_TOKEN: ${{ github.token }}
+          XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with: { node-version: "24.18.0", registry-url: https://registry.npmjs.org }
+        with:
+          node-version: "24.18.0"
+          registry-url: https://registry.npmjs.org
       - run: npm install --global npm@11.5.1 --ignore-scripts --no-audit --no-fund
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with: { name: npm-package-chain-${{ inputs.source_sha }}, path: .release }
+        with:
+          name: npm-package-chain-${{ inputs.source_sha }}
+          path: .release
       - run: test -z "${NODE_AUTH_TOKEN:-}" && sha256sum --check SHA256SUMS && npm publish xyva-contracts-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-bridge-types-0.1.1.tgz --tag next --ignore-scripts && npm publish xyva-bridge-browser-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-agent-0.1.13.tgz --tag next --ignore-scripts
         working-directory: .release
