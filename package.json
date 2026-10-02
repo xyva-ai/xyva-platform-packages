@@ -8,15 +8,16 @@
     "packages/contracts",
     "packages/bridge-types",
     "packages/bridge-browser",
-    "packages/agent"
+    "packages/agent",
+    "packages/platform"
   ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "build:public": "npm run build --workspace @xyva/contracts && npm run build --workspace @xyva/bridge-types && npm run build --workspace @xyva/bridge-browser && npm run build --workspace @xyva/agent",
-    "typecheck:public": "npm run typecheck --workspace @xyva/contracts && npm run typecheck --workspace @xyva/bridge-types && npm run typecheck --workspace @xyva/bridge-browser && npm run typecheck --workspace @xyva/agent",
-    "test:public": "npm run test --workspace @xyva/bridge-browser && vitest run -c vitest.public.config.ts",
+    "build:public": "npm run build --workspace @xyva/contracts && npm run build --workspace @xyva/bridge-types && npm run build --workspace @xyva/bridge-browser && npm run build --workspace @xyva/agent && npm run build --workspace @xyva/platform",
+    "typecheck:public": "npm run typecheck --workspace @xyva/contracts && npm run typecheck --workspace @xyva/bridge-types && npm run typecheck --workspace @xyva/bridge-browser && npm run typecheck --workspace @xyva/agent && npm run typecheck --workspace @xyva/platform",
+    "test:public": "npm run test --workspace @xyva/bridge-browser && npm run test --workspace @xyva/platform && vitest run -c vitest.public.config.ts",
     "verify:public": "npm run build:public && npm run typecheck:public && npm run test:public"
   },
   "overrides": {

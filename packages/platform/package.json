@@ -1,0 +1,47 @@
+{
+  "name": "@xyva/platform",
+  "version": "0.1.0",
+  "description": "Typed public client contracts for XYVA platform services.",
+  "private": false,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xyva-ai/xyva-platform-packages.git",
+    "directory": "packages/platform"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "vitest": "4.1.10"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/contracts.ts --format esm --dts --outDir dist --clean",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && vitest run -c vitest.config.ts",
+    "prepublishOnly": "npm run build && npm run test"
+  }
+}
