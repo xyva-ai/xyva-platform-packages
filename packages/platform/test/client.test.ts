@@ -81,4 +81,55 @@ describe('@xyva/platform client', () => {
     await expect(client.cancelJob('ws_1', 'job_1')).resolves.toMatchObject({ jobId: 'job_1' })
     expect(calls[1]?.url).toBe('https://api.xyva.ai/v1/workspaces/ws_1/jobs/job_1/cancel')
   })
+
+  it('maps the staging-only QA validation contract to a bounded platform job', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const client = createPlatformClient({
+      baseUrl: 'https://api.xyva.ai',
+      fetch: async (input, init) => {
+        calls.push({ url: String(input), init })
+        return new Response(JSON.stringify({ job: {
+          jobId: 'job_qa_1', state: 'queued', createdAt: '2026-10-03T00:00:00.000Z',
+          correlationId: 'flow-run-01', resultReference: null,
+        } }), { status: 202, headers: { 'content-type': 'application/json' } })
+      },
+    })
+
+    await expect(client.startQaValidation({
+      schemaVersion: 1,
+      workspaceId: 'ws_1',
+      flowRunId: 'flow-run-01',
+      testPlanReference: 'plan-2026-01',
+      environment: 'staging',
+      contractVersion: 'platform-v1',
+      capability: 'qa.validation.run',
+      correlationId: 'flow-run-01',
+      idempotencyKey: 'qa-validation-01',
+    })).resolves.toMatchObject({ jobId: 'job_qa_1' })
+
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      productId: 'flow', integrationId: 'qa-studio', capability: 'qa.validation.run',
+      idempotencyKey: 'qa-validation-01', requestReference: 'plan-2026-01', correlationId: 'flow-run-01',
+    })
+  })
+
+  it('rejects production QA validation before network access', async () => {
+    let called = false
+    const client = createPlatformClient({
+      baseUrl: 'https://api.xyva.ai',
+      fetch: async () => { called = true; return new Response('{}', { status: 200 }) },
+    })
+    await expect(client.startQaValidation({
+      schemaVersion: 1,
+      workspaceId: 'ws_1',
+      flowRunId: 'flow-run-01',
+      testPlanReference: 'plan-2026-01',
+      environment: 'production' as 'staging',
+      contractVersion: 'platform-v1',
+      capability: 'qa.validation.run',
+      correlationId: 'flow-run-01',
+      idempotencyKey: 'qa-validation-01',
+    })).rejects.toThrow('staging-only')
+    expect(called).toBe(false)
+  })
 })

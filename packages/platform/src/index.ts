@@ -1,6 +1,6 @@
 export * from './contracts.js'
 
-import type { IntegrationGrantV1, PlatformJobCommandResponseV1, PlatformJobV1, ProductEntitlementV1, StartPlatformJobRequestV1, WorkspaceV1 } from './contracts.js'
+import type { IntegrationGrantV1, PlatformJobCommandResponseV1, PlatformJobV1, ProductEntitlementV1, QaValidationRequestV1, StartPlatformJobRequestV1, WorkspaceV1 } from './contracts.js'
 
 export interface PlatformFetch {
   (input: string, init?: RequestInit): Promise<Response>
@@ -92,6 +92,27 @@ export class PlatformClient {
       body: JSON.stringify({ ...request, workspaceId: undefined }),
     })
     return (await responseJson<PlatformJobCommandResponseV1>(response)).job
+  }
+
+  public async startQaValidation(request: QaValidationRequestV1): Promise<PlatformJobV1> {
+    if (request.schemaVersion !== 1 || request.environment !== 'staging' || request.capability !== 'qa.validation.run') {
+      throw new TypeError('qa validation requests must be schema v1, staging-only, and use qa.validation.run')
+    }
+    assertIdentifier(request.workspaceId, 'workspaceId')
+    assertIdentifier(request.flowRunId, 'flowRunId')
+    assertIdentifier(request.testPlanReference, 'testPlanReference')
+    assertIdentifier(request.contractVersion, 'contractVersion')
+    assertIdentifier(request.correlationId, 'correlationId')
+    assertIdentifier(request.idempotencyKey, 'idempotencyKey')
+    return this.startJob({
+      workspaceId: request.workspaceId,
+      productId: 'flow',
+      integrationId: 'qa-studio',
+      capability: request.capability,
+      idempotencyKey: request.idempotencyKey,
+      requestReference: request.testPlanReference,
+      correlationId: request.correlationId,
+    })
   }
 
   public async cancelJob(workspaceId: string, jobId: string): Promise<PlatformJobV1> {
