@@ -1,6 +1,6 @@
 export * from './contracts.js'
 
-import type { IntegrationGrantV1, PlatformJobV1, ProductEntitlementV1, WorkspaceV1 } from './contracts.js'
+import type { IntegrationGrantV1, PlatformJobCommandResponseV1, PlatformJobV1, ProductEntitlementV1, StartPlatformJobRequestV1, WorkspaceV1 } from './contracts.js'
 
 export interface PlatformFetch {
   (input: string, init?: RequestInit): Promise<Response>
@@ -78,6 +78,30 @@ export class PlatformClient {
   public async getJob(jobId: string): Promise<PlatformJobV1> {
     assertIdentifier(jobId, 'jobId')
     return responseJson<PlatformJobV1>(await this.#fetch(new URL(`jobs/${encodeURIComponent(jobId)}`, this.#baseUrl).href, { headers: { accept: 'application/json' } }))
+  }
+
+  public async startJob(request: StartPlatformJobRequestV1): Promise<PlatformJobV1> {
+    assertIdentifier(request.workspaceId, 'workspaceId')
+    assertIdentifier(request.productId, 'productId')
+    assertIdentifier(request.integrationId, 'integrationId')
+    assertIdentifier(request.capability, 'capability')
+    assertIdentifier(request.idempotencyKey, 'idempotencyKey')
+    const response = await this.#fetch(new URL(`workspaces/${encodeURIComponent(request.workspaceId)}/jobs`, this.#baseUrl).href, {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ ...request, workspaceId: undefined }),
+    })
+    return (await responseJson<PlatformJobCommandResponseV1>(response)).job
+  }
+
+  public async cancelJob(workspaceId: string, jobId: string): Promise<PlatformJobV1> {
+    assertIdentifier(workspaceId, 'workspaceId')
+    assertIdentifier(jobId, 'jobId')
+    const response = await this.#fetch(new URL(`workspaces/${encodeURIComponent(workspaceId)}/jobs/${encodeURIComponent(jobId)}/cancel`, this.#baseUrl).href, {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+    })
+    return (await responseJson<PlatformJobCommandResponseV1>(response)).job
   }
 }
 

@@ -55,4 +55,30 @@ describe('@xyva/platform client', () => {
 
     await expect(client.getJob('job_1')).rejects.toEqual(new PlatformClientError('XYVA platform request failed', 403, 'corr_1'))
   })
+
+  it('sends tenant-bound job commands without leaking workspace routing into the body', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const client = createPlatformClient({
+      baseUrl: 'https://api.xyva.ai',
+      fetch: async (input, init) => {
+        calls.push({ url: String(input), init })
+        return new Response(JSON.stringify({ job: {
+          jobId: 'job_1', state: 'queued', createdAt: '2026-10-03T00:00:00.000Z',
+          correlationId: 'corr_1', resultReference: null,
+        } }), { status: 202, headers: { 'content-type': 'application/json' } })
+      },
+    })
+
+    await expect(client.startJob({
+      workspaceId: 'ws_1', productId: 'flow', integrationId: 'qa-studio',
+      capability: 'quality.read', idempotencyKey: 'job-request-1',
+    })).resolves.toMatchObject({ jobId: 'job_1' })
+    expect(calls[0]?.url).toBe('https://api.xyva.ai/v1/workspaces/ws_1/jobs')
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      productId: 'flow', integrationId: 'qa-studio', capability: 'quality.read', idempotencyKey: 'job-request-1',
+    })
+
+    await expect(client.cancelJob('ws_1', 'job_1')).resolves.toMatchObject({ jobId: 'job_1' })
+    expect(calls[1]?.url).toBe('https://api.xyva.ai/v1/workspaces/ws_1/jobs/job_1/cancel')
+  })
 })

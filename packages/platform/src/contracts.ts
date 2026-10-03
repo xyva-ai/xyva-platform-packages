@@ -58,6 +58,18 @@ export interface PlatformJobV1 {
   readonly resultReference: string | null
 }
 
+export interface StartPlatformJobRequestV1 {
+  readonly workspaceId: string
+  readonly productId: string
+  readonly integrationId: string
+  readonly capability: string
+  readonly idempotencyKey: string
+}
+
+export interface PlatformJobCommandResponseV1 {
+  readonly job: PlatformJobV1
+}
+
 export interface PlatformEventV1 {
   readonly eventId: string
   readonly type: string

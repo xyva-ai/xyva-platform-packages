@@ -2,9 +2,9 @@
 
 Typed, dependency-free client contracts for the XYVA platform API.
 
-The package is intentionally read-only in its first release. It contains no
-credentials, product data access, billing webhooks, agent runtime or browser
-automation. Product authorization remains server-side.
+The package contains typed workspace reads and tenant-bound job commands. It
+contains no credentials, product data access, billing webhooks, agent runtime
+or browser automation. Product authorization remains server-side.
 
 ```ts
 import { createPlatformClient } from '@xyva/platform'
