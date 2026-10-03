@@ -2,6 +2,26 @@ export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'viewer'
 export type EntitlementState = 'active' | 'suspended' | 'expired' | 'revoked'
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
+/** Public, transport-safe descriptor for a registered product adapter. */
+export interface ProductAdapterDescriptorV1 {
+  readonly schemaVersion: 1
+  readonly productId: string
+  readonly adapterVersion: string
+  readonly capabilities: readonly string[]
+}
+
+/** Request envelope shared by product-to-product integrations. */
+export interface ProductIntegrationRequestV1 {
+  readonly schemaVersion: 1
+  readonly workspaceId: string
+  readonly productId: string
+  readonly adapterVersion: string
+  readonly integrationId: string
+  readonly capability: string
+  readonly correlationId: string
+  readonly requestId: string
+}
+
 export interface PlatformIdentityV1 {
   readonly userId: string
   readonly issuer: string
