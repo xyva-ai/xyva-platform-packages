@@ -64,6 +64,21 @@ export interface StartPlatformJobRequestV1 {
   readonly integrationId: string
   readonly capability: string
   readonly idempotencyKey: string
+  readonly requestReference?: string
+  readonly correlationId?: string
+}
+
+/** First product-to-product capability: Flow requests a QA Studio validation run. */
+export interface QaValidationRequestV1 {
+  readonly schemaVersion: 1
+  readonly workspaceId: string
+  readonly flowRunId: string
+  readonly testPlanReference: string
+  readonly environment: 'staging'
+  readonly contractVersion: string
+  readonly capability: 'qa.validation.run'
+  readonly correlationId: string
+  readonly idempotencyKey: string
 }
 
 export interface PlatformJobCommandResponseV1 {
