@@ -58,7 +58,7 @@ jobs:
         with:
           node-version: "24.18.0"
           registry-url: https://registry.npmjs.org
-      - run: npm install --global npm@11.5.1 --ignore-scripts --no-audit --no-fund
+      - run: npm install --global npm@11.21.0 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund && npm run verify:public
       - name: Verify immutable public package contracts
         run: |
@@ -134,7 +134,7 @@ jobs:
         with:
           node-version: "24.18.0"
           registry-url: https://registry.npmjs.org
-      - run: npm install --global npm@11.5.1 --ignore-scripts --no-audit --no-fund
+      - run: npm install --global npm@11.21.0 --ignore-scripts --no-audit --no-fund
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: npm-package-chain-${{ inputs.source_sha }}
@@ -180,7 +180,7 @@ jobs:
         with:
           node-version: "24.18.0"
           registry-url: https://registry.npmjs.org
-      - run: npm install --global npm@11.5.1 --ignore-scripts --no-audit --no-fund
+      - run: npm install --global npm@11.21.0 --ignore-scripts --no-audit --no-fund
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: npm-package-chain-${{ inputs.source_sha }}
