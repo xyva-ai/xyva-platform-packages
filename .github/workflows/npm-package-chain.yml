@@ -37,6 +37,10 @@ jobs:
       - name: Reject non-GitHub-hosted execution
         if: runner.environment != 'github-hosted'
         run: exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
       - name: Require exact public source and confirmation
         env:
           APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
@@ -46,14 +50,11 @@ jobs:
         run: |
           test "$GITHUB_REPOSITORY" = "xyva-ai/xyva-platform-packages"
           test "$GITHUB_REF" = "refs/heads/main"
-          test "$GITHUB_SHA" = "$APPROVED_SOURCE_SHA"
+          checked_out_sha="$(git rev-parse HEAD)"
+          test "$checked_out_sha" = "$APPROVED_SOURCE_SHA"
           printf '%s' "$APPROVED_SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'
           test "$RELEASE_CONFIRMATION" = "PUBLISH_NEXT_CHAIN"
           case "$RELEASE_MODE" in bootstrap) test "$TRUST_CONFIRMATION" = "BOOTSTRAP_IRREVERSIBLE" ;; oidc) test "$TRUST_CONFIRMATION" = "OIDC_TRUST_CONFIGURED" ;; *) exit 1 ;; esac
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-          fetch-depth: 1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "24.18.0"
@@ -115,16 +116,16 @@ jobs:
         env:
           XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }}
         run: test "$XYVA_NPM_ENVIRONMENT_GUARD" = "xyva-npm-bootstrap-v1"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
       - name: Revalidate exact publication authority
         env:
           APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
           RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
           TRUST_CONFIRMATION: ${{ inputs.trust_confirmation }}
-        run: test "$GITHUB_REPOSITORY" = "xyva-ai/xyva-platform-packages" && test "$GITHUB_REF" = "refs/heads/main" && test "$GITHUB_SHA" = "$APPROVED_SOURCE_SHA" && test "$RELEASE_CONFIRMATION" = "PUBLISH_NEXT_CHAIN" && test "$TRUST_CONFIRMATION" = "BOOTSTRAP_IRREVERSIBLE"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-          fetch-depth: 1
+        run: test "$GITHUB_REPOSITORY" = "xyva-ai/xyva-platform-packages" && test "$GITHUB_REF" = "refs/heads/main" && test "$(git rev-parse HEAD)" = "$APPROVED_SOURCE_SHA" && test "$RELEASE_CONFIRMATION" = "PUBLISH_NEXT_CHAIN" && test "$TRUST_CONFIRMATION" = "BOOTSTRAP_IRREVERSIBLE"
       - run: node scripts/release/verify-npm-environment-policy.mjs
         env:
           GITHUB_ENVIRONMENT_NAME: npm-bootstrap
@@ -161,16 +162,16 @@ jobs:
         env:
           XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }}
         run: test "$XYVA_NPM_ENVIRONMENT_GUARD" = "xyva-npm-publish-v1"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
       - name: Revalidate exact publication authority
         env:
           APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
           RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
           TRUST_CONFIRMATION: ${{ inputs.trust_confirmation }}
-        run: test "$GITHUB_REPOSITORY" = "xyva-ai/xyva-platform-packages" && test "$GITHUB_REF" = "refs/heads/main" && test "$GITHUB_SHA" = "$APPROVED_SOURCE_SHA" && test "$RELEASE_CONFIRMATION" = "PUBLISH_NEXT_CHAIN" && test "$TRUST_CONFIRMATION" = "OIDC_TRUST_CONFIGURED"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          persist-credentials: false
-          fetch-depth: 1
+        run: test "$GITHUB_REPOSITORY" = "xyva-ai/xyva-platform-packages" && test "$GITHUB_REF" = "refs/heads/main" && test "$(git rev-parse HEAD)" = "$APPROVED_SOURCE_SHA" && test "$RELEASE_CONFIRMATION" = "PUBLISH_NEXT_CHAIN" && test "$TRUST_CONFIRMATION" = "OIDC_TRUST_CONFIGURED"
       - run: node scripts/release/verify-npm-environment-policy.mjs
         env:
           GITHUB_ENVIRONMENT_NAME: npm-publish
