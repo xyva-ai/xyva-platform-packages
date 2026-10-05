@@ -22,9 +22,25 @@ publish_if_missing() {
   npm publish "$tarball" --tag next --ignore-scripts
 }
 
+stage_if_missing() {
+  local package_name="$1"
+  local package_version="$2"
+  local tarball="$3"
+  local published_version
+
+  if published_version="$(npm view "${package_name}@${package_version}" version --registry=https://registry.npmjs.org 2>/dev/null)"; then
+    test "$published_version" = "$package_version"
+    echo "already-published-and-matching ${package_name}@${package_version}"
+    return
+  fi
+
+  npm stage publish "./$tarball" --tag next --access public
+  echo "staged-for-human-approval ${package_name}@${package_version}"
+}
+
 sha256sum --check SHA256SUMS
 publish_if_missing @xyva/contracts 0.1.0 xyva-contracts-0.1.0.tgz
 publish_if_missing @xyva/bridge-types 0.1.1 xyva-bridge-types-0.1.1.tgz
 publish_if_missing @xyva/bridge-browser 0.1.0 xyva-bridge-browser-0.1.0.tgz
 publish_if_missing @xyva/agent 0.1.13 xyva-agent-0.1.13.tgz
-publish_if_missing @xyva/platform 0.1.1 xyva-platform-0.1.1.tgz
+stage_if_missing @xyva/platform 0.1.1 xyva-platform-0.1.1.tgz
