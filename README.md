@@ -8,12 +8,13 @@ exact versions below; do not use an unversioned install during the Alpha.
 GitHub Private Vulnerability Reporting and the Security Advisories flow described
 in `SECURITY.md` are enabled for responsible disclosure.
 
-The candidate contains four publishable workspaces:
+The candidate contains five publishable workspaces:
 
 - `@xyva/contracts` — versioned product and provider contracts.
 - `@xyva/bridge-types` — shared bridge protocol types and provider client pieces.
 - `@xyva/bridge-browser` — browser WebSocket transport for the bridge protocol.
 - `@xyva/agent` — a local test agent.
+- `@xyva/platform` — the typed client entry point for the shared XYVA platform API.
 
 It also retains the non-published `packages/xyva-swarms` source required to build
 and test the curated package closure. That directory is not an npm package and is
@@ -39,6 +40,7 @@ npm install @xyva/contracts@0.1.0
 npm install @xyva/bridge-types@0.1.1
 npm install @xyva/bridge-browser@0.1.0
 npm install @xyva/agent@0.1.13
+npm install @xyva/platform@0.1.1
 ```
 
 The release workflow selected the `next` channel and never selected `latest`.
