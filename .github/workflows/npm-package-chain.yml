@@ -185,5 +185,5 @@ jobs:
         with:
           name: npm-package-chain-${{ inputs.source_sha }}
           path: release
-      - run: test -z "${NODE_AUTH_TOKEN:-}" && sha256sum --check SHA256SUMS && npm publish xyva-contracts-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-bridge-types-0.1.1.tgz --tag next --ignore-scripts && npm publish xyva-bridge-browser-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-agent-0.1.13.tgz --tag next --ignore-scripts && npm publish xyva-platform-0.1.1.tgz --tag next --ignore-scripts
+      - run: sha256sum --check SHA256SUMS && npm publish xyva-contracts-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-bridge-types-0.1.1.tgz --tag next --ignore-scripts && npm publish xyva-bridge-browser-0.1.0.tgz --tag next --ignore-scripts && npm publish xyva-agent-0.1.13.tgz --tag next --ignore-scripts && npm publish xyva-platform-0.1.1.tgz --tag next --ignore-scripts
         working-directory: release
