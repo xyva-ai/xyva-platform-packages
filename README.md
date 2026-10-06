@@ -40,7 +40,7 @@ npm install @xyva/contracts@0.1.0
 npm install @xyva/bridge-types@0.1.1
 npm install @xyva/bridge-browser@0.1.0
 npm install @xyva/agent@0.1.13
-npm install @xyva/platform@0.1.1
+npm install @xyva/platform@0.1.2
 ```
 
 The release workflow selected the `next` channel and never selected `latest`.
