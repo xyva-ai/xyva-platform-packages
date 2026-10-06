@@ -1,6 +1,6 @@
 {
   "name": "@xyva/agent",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Local test agent for xyva.ai.",
   "private": false,
   "license": "Apache-2.0",
