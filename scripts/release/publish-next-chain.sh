@@ -45,5 +45,5 @@ sha256sum --check SHA256SUMS
 publish_if_missing @xyva/contracts 0.1.0 xyva-contracts-0.1.0.tgz
 publish_if_missing @xyva/bridge-types 0.1.1 xyva-bridge-types-0.1.1.tgz
 publish_if_missing @xyva/bridge-browser 0.1.0 xyva-bridge-browser-0.1.0.tgz
-publish_if_missing @xyva/agent 0.1.13 xyva-agent-0.1.13.tgz
+publish_if_missing @xyva/agent 0.1.14 xyva-agent-0.1.14.tgz
 stage_if_missing @xyva/platform 0.1.2 xyva-platform-0.1.2.tgz
