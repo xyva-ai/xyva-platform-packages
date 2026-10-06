@@ -69,7 +69,7 @@ jobs:
             ["contracts", "@xyva/contracts", "0.1.0", {}],
             ["bridge-types", "@xyva/bridge-types", "0.1.1", { "@xyva/contracts": "0.1.0" }],
             ["bridge-browser", "@xyva/bridge-browser", "0.1.0", { "@xyva/bridge-types": "0.1.1" }],
-            ["agent", "@xyva/agent", "0.1.13", { "@xyva/contracts": "0.1.0", "@xyva/bridge-types": "0.1.1" }],
+            ["agent", "@xyva/agent", "0.1.14", { "@xyva/contracts": "0.1.0", "@xyva/bridge-types": "0.1.1" }],
             ["platform", "@xyva/platform", "0.1.2", {}],
           ]
           const normalizeDependencies = (entries) => Object.fromEntries(
@@ -89,7 +89,7 @@ jobs:
           test "$(node -p "require('./packages/contracts/package.json').version")" = "0.1.0"
           test "$(node -p "require('./packages/bridge-types/package.json').version")" = "0.1.1"
           test "$(node -p "require('./packages/bridge-browser/package.json').version")" = "0.1.0"
-          test "$(node -p "require('./packages/agent/package.json').version")" = "0.1.13"
+          test "$(node -p "require('./packages/agent/package.json').version")" = "0.1.14"
           test "$(node -p "require('./packages/platform/package.json').version")" = "0.1.2"
           (cd release && sha256sum *.tgz > SHA256SUMS)
       - id: upload
