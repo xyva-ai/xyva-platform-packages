@@ -42,6 +42,16 @@ export interface ProductEntitlementV1 {
   readonly validUntil: string | null
 }
 
+/** Minimal entitlement view used by the central product switcher. */
+export interface ProductAccessV1 {
+  readonly workspaceId: string
+  readonly workspaceName: string
+  readonly membershipRole: WorkspaceRole
+  readonly productId: string
+  readonly state: 'active' | 'trialing'
+  readonly validUntil?: string
+}
+
 export interface IntegrationGrantV1 {
   readonly workspaceId: string
   readonly integrationId: string

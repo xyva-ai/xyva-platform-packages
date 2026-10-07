@@ -1,6 +1,6 @@
 export * from './contracts.js'
 
-import type { IntegrationGrantV1, PlatformJobCommandResponseV1, PlatformJobV1, ProductEntitlementV1, QaValidationRequestV1, StartPlatformJobRequestV1, WorkspaceV1 } from './contracts.js'
+import type { IntegrationGrantV1, PlatformJobCommandResponseV1, PlatformJobV1, ProductAccessV1, ProductEntitlementV1, QaValidationRequestV1, StartPlatformJobRequestV1, WorkspaceV1 } from './contracts.js'
 
 export interface PlatformFetch {
   (input: string, init?: RequestInit): Promise<Response>
@@ -62,6 +62,13 @@ export class PlatformClient {
 
   public async listWorkspaces(): Promise<readonly WorkspaceV1[]> {
     return responseJson<readonly WorkspaceV1[]>(await this.#fetch(new URL('workspaces', this.#baseUrl).href, { headers: { accept: 'application/json' } }))
+  }
+
+  public async listProductAccess(): Promise<readonly ProductAccessV1[]> {
+    const payload = await responseJson<{ products: readonly ProductAccessV1[] }>(
+      await this.#fetch(new URL('product-access', this.#baseUrl).href, { headers: { accept: 'application/json' } }),
+    )
+    return payload.products
   }
 
   public async listEntitlements(workspaceId: string): Promise<readonly ProductEntitlementV1[]> {

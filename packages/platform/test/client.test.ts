@@ -41,6 +41,26 @@ describe('@xyva/platform client', () => {
     expect(requests).toEqual(['https://api.xyva.ai/v1/workspaces'])
   })
 
+  it('reads only the server-authorized product access list for the switcher', async () => {
+    const requests: string[] = []
+    const client = createPlatformClient({
+      baseUrl: 'https://api.xyva.ai',
+      fetch: async (input) => {
+        requests.push(String(input))
+        return new Response(JSON.stringify({ products: [{
+          workspaceId: 'ws_1', workspaceName: 'XYVA', membershipRole: 'owner',
+          productId: 'flow', state: 'active',
+        }] }), { status: 200, headers: { 'content-type': 'application/json' } })
+      },
+    })
+
+    await expect(client.listProductAccess()).resolves.toEqual([{
+      workspaceId: 'ws_1', workspaceName: 'XYVA', membershipRole: 'owner',
+      productId: 'flow', state: 'active',
+    }])
+    expect(requests).toEqual(['https://api.xyva.ai/v1/product-access'])
+  })
+
   it('rejects unsafe base URLs and identifiers before a request is made', () => {
     expect(() => createPlatformClient({ baseUrl: 'http://api.xyva.ai' })).toThrow('HTTPS')
     expect(() => createPlatformClient({ baseUrl: 'https://user:password@api.xyva.ai' })).toThrow('without credentials')
