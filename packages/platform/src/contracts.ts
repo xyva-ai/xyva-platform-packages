@@ -1,5 +1,5 @@
 export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'viewer'
-export type EntitlementState = 'active' | 'suspended' | 'expired' | 'revoked'
+export type EntitlementState = 'active' | 'trialing' | 'suspended' | 'expired' | 'revoked'
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 /** Public, transport-safe descriptor for a registered product adapter. */
