@@ -3,8 +3,11 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { CliVersionManager } from './cli-version-manager.js'
+import { TrustedCliCommandResolver } from './cli-command-resolver.js'
+import { CliProcessManager } from './cli-process-manager.js'
 import { SpawnCliProcessRunner } from './cli-process-runner.js'
 import type {
+  CliCommandResolver,
   CliDiscoveryStatus,
   CliInferenceRequest,
   CliInferenceResult,
@@ -46,41 +49,42 @@ function versionFromOutput(value: string): string | null {
   return match?.[0] || null
 }
 
-function installationKind(): CliDiscoveryStatus['installationKind'] {
-  return process.env.npm_config_prefix ? 'npm-global' : 'path'
-}
-
-function codeFailure(result: { timedOut: boolean; cancelled: boolean; exitCode: number | null }): string {
+function codeFailure(result: { timedOut: boolean; cancelled: boolean; outputLimitExceeded?: boolean; exitCode: number | null }): string {
   if (result.cancelled) return 'cancelled'
   if (result.timedOut) return 'timed out'
+  if (result.outputLimitExceeded) return 'exceeded output limit'
   return result.exitCode === null ? 'unavailable' : 'failed'
 }
 
 export class GenericCliAdapter implements CliProviderAdapter {
-  readonly #running = new Set<AbortController>()
-
   public constructor(
     private readonly definition: AdapterDefinition,
     private readonly runner: CliProcessRunner = new SpawnCliProcessRunner(),
     private readonly versions: CliVersionManager = new CliVersionManager(),
+    private readonly resolver: CliCommandResolver = new TrustedCliCommandResolver(),
+    private readonly processes: CliProcessManager = new CliProcessManager(),
   ) {}
 
   public get providerId(): CliProviderId { return this.definition.providerId }
 
   public async discover(): Promise<CliDiscoveryStatus> {
+    const resolved = await this.resolver.resolve(this.definition.command)
+    if (!resolved.trusted || !resolved.executablePath) {
+      return this.status(this.versions.status(this.providerId, null), false, 'unavailable', resolved.detail, null)
+    }
     const result = await this.runner.run({
-      command: this.definition.command,
+      command: resolved.executablePath,
       args: ['--version'], cwd: os.tmpdir(), env: safeEnvironment(), timeoutMs: DISCOVERY_TIMEOUT_MS, maxOutputBytes: 4_096,
     })
     const installedVersion = result.exitCode === 0 && !result.timedOut && !result.cancelled
       ? versionFromOutput(`${result.stdout}\n${result.stderr}`)
       : null
     const version = this.versions.status(this.providerId, installedVersion)
-    if (!installedVersion) return this.status(version, false, 'unavailable', 'CLI not installed or not executable.')
-    if (!version.supported) return this.status(version, true, 'unsupported_version', 'Installed CLI version is outside the supported matrix.')
-    const authentication = await this.authenticationStatus()
+    if (!installedVersion) return this.status(version, false, 'unavailable', 'Trusted CLI could not be executed.', resolved.installationKind)
+    if (!version.supported) return this.status(version, true, 'unsupported_version', 'Installed CLI version is outside the supported matrix.', resolved.installationKind)
+    const authentication = await this.authenticationStatus(resolved.executablePath)
     return {
-      ...this.status(version, true, authentication === 'not_checked' ? 'authentication_unknown' : 'ready', authentication === 'authenticated' ? 'CLI is installed and authenticated.' : 'CLI is installed; authentication was not confirmed.'),
+      ...this.status(version, true, authentication === 'not_checked' ? 'authentication_unknown' : 'ready', authentication === 'authenticated' ? 'CLI is installed and authenticated.' : 'CLI is installed; authentication was not confirmed.', resolved.installationKind),
       authentication,
     }
   }
@@ -88,12 +92,8 @@ export class GenericCliAdapter implements CliProviderAdapter {
   public async getReadiness(): Promise<CliDiscoveryStatus> { return this.discover() }
 
   public async beginLogin(): Promise<{ started: boolean; detail: string }> {
-    if (!this.definition.loginArgs) return { started: false, detail: 'This CLI has no configured documented non-secret login launcher.' }
-    // Login owns its own session storage. The agent never reads or writes it.
-    const result = await this.runner.run({
-      command: this.definition.command, args: this.definition.loginArgs, cwd: os.tmpdir(), env: safeEnvironment(), timeoutMs: 120_000, maxOutputBytes: 8_192,
-    })
-    return { started: result.exitCode === 0, detail: result.exitCode === 0 ? 'Official CLI login completed.' : `Official CLI login ${codeFailure(result)}.` }
+    // Device authentication is interactive; a non-TTY agent must never start or alter a user session.
+    return { started: false, detail: 'Interactive CLI login is disabled pending a separately approved TTY/device-code flow.' }
   }
 
   public async listModels(): Promise<string[]> { return [] }
@@ -104,52 +104,52 @@ export class GenericCliAdapter implements CliProviderAdapter {
     if (typeof request.prompt !== 'string' || !request.prompt.trim() || Buffer.byteLength(request.prompt, 'utf8') > MAX_PROMPT_BYTES) {
       throw new Error('Invalid CLI inference request')
     }
-    const taskDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-codex-task-'))
-    const controller = new AbortController()
-    this.#running.add(controller)
-    const abort = () => controller.abort()
+    const lease = this.processes.acquire(this.providerId, request.requestId)
+    const abort = () => this.processes.cancel(lease.requestId)
     request.signal?.addEventListener('abort', abort, { once: true })
+    let taskDirectory: string | undefined
     try {
+      const resolved = await this.resolver.resolve(this.definition.command)
+      if (!resolved.trusted || !resolved.executablePath) throw new Error('CLI executable is unavailable or untrusted')
+      taskDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-codex-task-'))
       const result = await this.runner.run({
-        command: this.definition.command,
+        command: resolved.executablePath,
         args: ['exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only', '--skip-git-repo-check', '--json', '-C', taskDirectory, '-'],
-        cwd: taskDirectory, env: safeEnvironment(), stdin: request.prompt, signal: controller.signal, timeoutMs: INFERENCE_TIMEOUT_MS, maxOutputBytes: MAX_OUTPUT_BYTES,
+        cwd: taskDirectory, env: safeEnvironment(), stdin: request.prompt, signal: lease.signal, timeoutMs: INFERENCE_TIMEOUT_MS, maxStdoutBytes: MAX_OUTPUT_BYTES, maxStderrBytes: MAX_OUTPUT_BYTES,
       })
       if (result.cancelled) throw new Error('CLI inference cancelled')
       if (result.timedOut) throw new Error('CLI inference timed out')
+      if (result.outputLimitExceeded) throw new Error('CLI inference exceeded output limit')
       if (result.exitCode !== 0) throw new Error('CLI inference failed')
       const parsed = parseCodexJsonl(result.stdout)
       if (!parsed.outputText) throw new Error('CLI inference returned no output')
       return parsed
     } finally {
       request.signal?.removeEventListener('abort', abort)
-      this.#running.delete(controller)
-      fs.rmSync(taskDirectory, { recursive: true, force: true })
+      lease.release()
+      if (taskDirectory) fs.rmSync(taskDirectory, { recursive: true, force: true })
     }
   }
 
-  public cancel(): boolean {
-    const controller = this.#running.values().next().value as AbortController | undefined
-    if (!controller) return false
-    controller.abort()
-    return true
+  public cancel(requestId: string): boolean {
+    return this.processes.cancel(requestId)
   }
 
   public async getVersionStatus(): Promise<CliVersionStatus> { return (await this.discover()).version }
 
-  private async authenticationStatus(): Promise<CliDiscoveryStatus['authentication']> {
+  private async authenticationStatus(command: string): Promise<CliDiscoveryStatus['authentication']> {
     if (!this.definition.authenticationArgs) return 'not_checked'
     const result = await this.runner.run({
-      command: this.definition.command, args: this.definition.authenticationArgs, cwd: os.tmpdir(), env: safeEnvironment(), timeoutMs: DISCOVERY_TIMEOUT_MS, maxOutputBytes: 4_096,
+      command, args: this.definition.authenticationArgs, cwd: os.tmpdir(), env: safeEnvironment(), timeoutMs: DISCOVERY_TIMEOUT_MS, maxOutputBytes: 4_096,
     })
     if (result.exitCode !== 0 || result.timedOut || result.cancelled) return 'not_authenticated'
     return /not logged|not authenticated|logged out/iu.test(`${result.stdout}\n${result.stderr}`) ? 'not_authenticated' : 'authenticated'
   }
 
-  private status(version: CliVersionStatus, executable: boolean, readiness: CliDiscoveryStatus['readiness'], detail: string): CliDiscoveryStatus {
+  private status(version: CliVersionStatus, executable: boolean, readiness: CliDiscoveryStatus['readiness'], detail: string, installationKind: CliDiscoveryStatus['installationKind']): CliDiscoveryStatus {
     return {
       providerId: this.providerId, displayName: this.definition.displayName, command: this.definition.command,
-      installed: executable, executable, installationKind: executable ? installationKind() : null,
+      installed: executable, executable, installationKind: executable ? installationKind : null,
       authentication: executable ? 'not_checked' : 'unavailable', readiness, version,
       loginCommand: this.definition.loginArgs ? `${this.definition.command} ${this.definition.loginArgs.join(' ')}` : null,
       installCommand: this.definition.installCommand, detail,
@@ -178,6 +178,10 @@ function parseCodexJsonl(stdout: string): CliInferenceResult {
   return { outputText, inputTokens, outputTokens }
 }
 
-export function createCliAdapters(runner?: CliProcessRunner): Map<CliProviderId, CliProviderAdapter> {
-  return new Map(DEFINITIONS.map((definition) => [definition.providerId, new GenericCliAdapter(definition, runner)]))
+export function createCliAdapters(
+  runner?: CliProcessRunner,
+  options: { resolver?: CliCommandResolver; processes?: CliProcessManager } = {},
+): Map<CliProviderId, CliProviderAdapter> {
+  const processes = options.processes || new CliProcessManager()
+  return new Map(DEFINITIONS.map((definition) => [definition.providerId, new GenericCliAdapter(definition, runner, undefined, options.resolver, processes)]))
 }
