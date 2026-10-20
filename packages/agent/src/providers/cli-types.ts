@@ -18,7 +18,7 @@ export interface CliDiscoveryStatus {
   command: string
   installed: boolean
   executable: boolean
-  installationKind: 'npm-global' | 'path' | 'unknown' | null
+  installationKind: CliInstallationKind | null
   authentication: CliAuthenticationStatus
   readiness: 'ready' | 'not_installed' | 'unsupported_version' | 'authentication_unknown' | 'disabled' | 'unavailable'
   version: CliVersionStatus
@@ -29,6 +29,8 @@ export interface CliDiscoveryStatus {
 
 export interface CliInferenceRequest {
   prompt: string
+  /** Caller-provided ID permits targeted cancellation; adapters generate one for isolated callers. */
+  requestId?: string
   signal?: AbortSignal
 }
 
@@ -44,6 +46,7 @@ export interface CliProcessResult {
   stderr: string
   timedOut: boolean
   cancelled: boolean
+  outputLimitExceeded?: boolean
 }
 
 export interface CliProcessRunner {
@@ -55,8 +58,24 @@ export interface CliProcessRunner {
     stdin?: string
     signal?: AbortSignal
     timeoutMs: number
-    maxOutputBytes: number
+    maxOutputBytes?: number
+    maxStdoutBytes?: number
+    maxStderrBytes?: number
   }): Promise<CliProcessResult>
+}
+
+export type CliInstallationKind = 'npm-global' | 'system' | 'user-managed' | 'path' | 'unknown'
+
+export interface CliCommandResolution {
+  command: string
+  executablePath: string | null
+  installationKind: CliInstallationKind | null
+  trusted: boolean
+  detail: string
+}
+
+export interface CliCommandResolver {
+  resolve(command: string): Promise<CliCommandResolution>
 }
 
 export interface CliProviderAdapter {
@@ -66,6 +85,6 @@ export interface CliProviderAdapter {
   beginLogin(): Promise<{ started: boolean; detail: string }>
   listModels(): Promise<string[]>
   infer(request: CliInferenceRequest): Promise<CliInferenceResult>
-  cancel(): boolean
+  cancel(requestId: string): boolean
   getVersionStatus(): Promise<CliVersionStatus>
 }
