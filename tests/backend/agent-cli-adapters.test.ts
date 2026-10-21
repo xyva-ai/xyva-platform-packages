@@ -107,13 +107,24 @@ describe('trusted command and request lifecycle policy', () => {
     try {
       const fake = path.join(temporary, 'codex')
       await fs.writeFile(fake, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
-      const resolver = new TrustedCliCommandResolver({ env: { PATH: temporary }, cwd: process.cwd(), homeDir: os.homedir(), platform: 'darwin' })
+      const resolver = new TrustedCliCommandResolver({ env: { PATH: temporary }, cwd: process.cwd(), homeDir: os.homedir(), platform: process.platform })
       const resolution = await resolver.resolve('codex')
       expect(resolution.trusted).toBe(false)
       let called = false
       const adapter = createCliAdapters(fakeRunner(async () => { called = true; return { exitCode: 0, stdout: '', stderr: '', timedOut: false, cancelled: false } }), { resolver }).get('codex')!
       await expect(adapter.infer({ requestId: 'hijack-request', prompt: 'safe' })).rejects.toThrow('unavailable or untrusted')
       expect(called).toBe(false)
+    } finally { await fs.rm(temporary, { recursive: true, force: true }) }
+  })
+
+  it.skipIf(process.platform !== 'win32')('rejects a PATH-prepended npm .cmd launcher instead of falling back to a shell', async () => {
+    const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'xyva-cli-cmd-'))
+    try {
+      await fs.writeFile(path.join(temporary, 'codex.cmd'), '@echo off\r\necho unsafe\r\n')
+      const resolver = new TrustedCliCommandResolver({ env: { PATH: temporary }, cwd: process.cwd(), homeDir: os.homedir(), platform: 'win32' })
+      const resolution = await resolver.resolve('codex')
+      expect(resolution.trusted).toBe(false)
+      expect(resolution.executablePath).toBeNull()
     } finally { await fs.rm(temporary, { recursive: true, force: true }) }
   })
 
@@ -159,6 +170,21 @@ describe('spawn process boundary', () => {
 
   it.skipIf(process.platform === 'win32')('terminates the POSIX process group created by a timed-out parent', async () => {
     const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'xyva-cli-process-group-'))
+    try {
+      const pidFile = path.join(temporary, 'child.pid')
+      const childCode = `const { spawn } = require('node:child_process'); const fs = require('node:fs'); const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 10000)']); fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); setInterval(() => {}, 10000);`
+      const result = await new SpawnCliProcessRunner().run({
+        command: process.execPath, args: ['-e', childCode], cwd: temporary, env: { PATH: process.env.PATH }, timeoutMs: 250, maxOutputBytes: 1024,
+      })
+      expect(result.timedOut).toBe(true)
+      const pid = Number(await fs.readFile(pidFile, 'utf8'))
+      await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(() => process.kill(pid, 0)).toThrow()
+    } finally { await fs.rm(temporary, { recursive: true, force: true }) }
+  })
+
+  it.skipIf(process.platform !== 'win32')('terminates a Windows parent and its test child through taskkill', async () => {
+    const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'xyva-cli-process-tree-'))
     try {
       const pidFile = path.join(temporary, 'child.pid')
       const childCode = `const { spawn } = require('node:child_process'); const fs = require('node:fs'); const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 10000)']); fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid)); setInterval(() => {}, 10000);`
