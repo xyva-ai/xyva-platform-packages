@@ -1,8 +1,8 @@
 # XYVA AI CLI – GitHub-hosted Windows-CI-Plan
 
-Stand: 21. Oktober 2026  
-Status: **vorbereitet, nicht ausgeführt**  
-Branch: `codex/ai-cli-adapters`  
+Stand: 21. Oktober 2026
+Status: **vorbereitet, nicht ausgeführt**
+Branch: `codex/ai-cli-adapters`
 Hardening-Commit: `a86560b8f0e05c6397a902f24634dc883c9b66e9`
 
 ## Zweck und Abnahmegrenze
@@ -19,7 +19,7 @@ Neu vorbereitet wurde [windows-cli-adapter.yml](.github/workflows/windows-cli-ad
 | --- | --- |
 | Auslösung | `workflow_dispatch` sowie ausschließlich `pull_request:labeled` für Same-Repository-PRs nach `main`, wenn das Label `ci:windows-cli` hinzugefügt wurde; kein Push-Trigger |
 | Runner | GitHub-hosted `windows-2025`; ein zusätzlicher Boundary-Check verweigert andere Runner |
-| Node | Node.js 22 über `actions/setup-node` |
+| Node | Node.js 22 über `actions/setup-node`; Node-/npm-Versionen werden erst danach in die Evidenz geschrieben |
 | Berechtigungen | ausschließlich `contents: read` |
 | Checkout | fest gepinnte `actions/checkout`-Revision, `persist-credentials: false`, flacher Checkout; bei PR-Label-Run explizit `github.event.pull_request.head.sha`, nie der synthetische PR-Merge-Commit |
 | Installation | `npm ci --ignore-scripts --no-audit --no-fund` anhand des vorhandenen Lockfiles |
@@ -29,7 +29,7 @@ Neu vorbereitet wurde [windows-cli-adapter.yml](.github/workflows/windows-cli-ad
 | Infrastruktur | kein Proxmox-, Self-hosted-, SSH- oder Netzwerkinfrastruktur-Zugriff |
 | Mutationen | kein Publish, kein Deployment, kein Merge und keine Release-Aktion |
 
-Die verwendeten GitHub-Actions sind wie die bestehenden Workflows auf feste Commit-Revisionen gepinnt. Der Workflow besitzt keinen Trigger, der durch einen späteren Push automatisch einen Lauf startet. Nach der späteren, ausdrücklich erlaubten Erstellung eines Draft-PRs ist der CI-Lauf nur durch das kontrollierte Hinzufügen von `ci:windows-cli` möglich; der manuelle Dispatch bleibt ein zweiter, separat autorisierter Pfad.
+Die verwendeten GitHub-Actions sind wie die bestehenden Workflows auf feste Commit-Revisionen gepinnt. Der Workflow besitzt keinen Trigger, der durch einen späteren Push automatisch einen Lauf startet. Vor Aufnahme der Workflow-Datei auf den Default-Branch ist `workflow_dispatch` in GitHub nicht als manueller Auslöseweg verfügbar. Der erste zulässige Auslöseweg ist daher der kontrollierte `pull_request:labeled`-Run auf dem Draft-PR; nach einer späteren, separat freigegebenen Aufnahme auf den Default-Branch bleibt der manuelle Dispatch ein zweiter autorisierter Pfad.
 
 Der Job besitzt zusätzlich eine auswertbare Gate-Bedingung. Ein Label-Event führt den Testjob nur aus, wenn das gerade hinzugefügte Label exakt `ci:windows-cli` heißt, der PR gegen `main` gerichtet ist und `github.event.pull_request.head.repo.full_name` dem aktuellen Repository entspricht. Fork-PRs, andere Labels und andere Zielbranches ergeben keinen ausführbaren Job. `pull_request_target` wird nicht verwendet.
 
@@ -90,9 +90,9 @@ Dies sind macOS-Lokalnachweise der Testvorbereitung, **keine Windows-CI-Ergebnis
 
 ## Erwartete CI-Evidenz und Artefaktspeicher
 
-Der Run erzeugt ausschließlich die geheimnisfreie Datei `windows-cli-evidence.txt`. Sie enthält den tatsächlich ausgecheckten `tested_sha`, Runner-OS/-Umgebung sowie Node- und npm-Version. Dieselben Angaben stehen im Step Summary. Nach den Tests wird die Datei mit siebentägiger Aufbewahrung als `windows-cli-evidence-<tested_sha>` hochgeladen; Testausgaben, Umgebungsvariablen, Sessiondateien und Provider-Credentials werden nicht als Artefakt exportiert.
+Der Run erzeugt ausschließlich die geheimnisfreie Datei `windows-cli-evidence.txt`. Sie enthält den tatsächlich ausgecheckten `tested_sha`, Runner-OS/-Umgebung, Runner-Image/-Version, Windows-Caption/-Version/-Build sowie die erst nach `actions/setup-node` erfassten Node- und npm-Versionen. Dieselben Angaben stehen im Step Summary. Nach den Tests wird die Datei mit siebentägiger Aufbewahrung als `windows-cli-evidence-<tested_sha>` hochgeladen; Testausgaben, Umgebungsvariablen, Sessiondateien und Provider-Credentials werden nicht als Artefakt exportiert.
 
-Ist der GitHub-Artefaktspeicher erschöpft, ist der Upload bewusst nicht Test-gate-bestimmend. Der Lauf darf dadurch nicht als vollständiger PASS klassifiziert werden: Die unmittelbar im Run vorhandene Step Summary und die Job-Logs sichern, den Upload-Warnhinweis und die Speicherkapazität dokumentieren und erst nach Bereinigung oder Erhöhung des Artefaktlimits einen erneuten Label-Run ausführen. Keine Geheimnisse, Logs oder Sessiondateien zur Umgehung extern speichern.
+Ist der GitHub-Artefaktspeicher erschöpft, wird der Artefakt-Upload als expliziter Acceptance-Fail ausgewiesen: Der finale Evidenzschritt schlägt fehl, auch wenn die Testschritte zuvor erfolgreich waren. Die unmittelbar im Run vorhandene Step Summary und die Job-Logs sichern, den Upload-Warnhinweis und die Speicherkapazität dokumentieren und erst nach Bereinigung oder Erhöhung des Artefaktlimits einen erneuten Label-Run ausführen. Keine Geheimnisse, Logs oder Sessiondateien zur Umgehung extern speichern.
 
 ## Reproduktion auf dem späteren Runner
 
