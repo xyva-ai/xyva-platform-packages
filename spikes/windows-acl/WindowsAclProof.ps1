@@ -24,8 +24,14 @@ function New-AllowRule([string] $Sid, [bool] $Inherit) {
 
 function Get-AclEvidence([string] $Path) {
   $acl = Get-Acl -LiteralPath $Path
+  $owner = [string]$acl.Owner
+  try {
+    $ownerSid = [Security.Principal.SecurityIdentifier]::new($owner).Value
+  } catch {
+    $ownerSid = ([Security.Principal.NTAccount]::new($owner)).Translate([Security.Principal.SecurityIdentifier]).Value
+  }
   [pscustomobject]@{
-    Owner = $acl.Owner.Translate([Security.Principal.SecurityIdentifier]).Value
+    Owner = $ownerSid
     Protected = $acl.AreAccessRulesProtected
     Entries = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {
       [pscustomobject]@{ Sid = $_.IdentityReference.Value; Type = $_.AccessControlType.ToString(); Rights = [int]$_.FileSystemRights; Inherited = $_.IsInherited }
