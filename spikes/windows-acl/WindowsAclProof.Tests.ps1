@@ -5,7 +5,10 @@ function Assert-UnsafeAllowRejected([string] $Sid, [string] $Name) {
   $candidate = Join-Path $root $Name
   New-PrivateFile $candidate 'synthetic-secret' | Out-Null
   $acl = Get-Acl -LiteralPath $candidate
-  $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($Sid, 'Read', 'Allow')))
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    [Security.Principal.SecurityIdentifier]::new($Sid),
+    [Security.AccessControl.FileSystemRights]::Read,
+    [Security.AccessControl.AccessControlType]::Allow))
   Set-Acl -LiteralPath $candidate -AclObject $acl
   try {
     Assert-PrivateAcl $candidate (Get-CurrentSid) | Out-Null

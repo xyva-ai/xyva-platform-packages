@@ -6,6 +6,22 @@ $BroadSids = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545') # Everyone, Authenticated 
 
 function Get-CurrentSid { [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
 
+function New-AllowRule([string] $Sid, [bool] $Inherit) {
+  $identity = [Security.Principal.SecurityIdentifier]::new($Sid)
+  if ($Inherit) {
+    return [Security.AccessControl.FileSystemAccessRule]::new(
+      $identity,
+      [Security.AccessControl.FileSystemRights]::FullControl,
+      [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+      [Security.AccessControl.PropagationFlags]::None,
+      [Security.AccessControl.AccessControlType]::Allow)
+  }
+  return [Security.AccessControl.FileSystemAccessRule]::new(
+    $identity,
+    [Security.AccessControl.FileSystemRights]::FullControl,
+    [Security.AccessControl.AccessControlType]::Allow)
+}
+
 function Get-AclEvidence([string] $Path) {
   $acl = Get-Acl -LiteralPath $Path
   [pscustomobject]@{
@@ -32,7 +48,7 @@ function New-PrivateDirectory([string] $Path) {
   $acl = New-Object Security.AccessControl.DirectorySecurity
   $acl.SetOwner([Security.Principal.SecurityIdentifier]$owner)
   $acl.SetAccessRuleProtection($true, $false)
-  foreach ($sid in @($owner) + $TrustedSystemSids) { $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))) }
+  foreach ($sid in @($owner) + $TrustedSystemSids) { $acl.AddAccessRule((New-AllowRule $sid $true)) }
   Set-Acl -LiteralPath $Path -AclObject $acl
   Assert-PrivateAcl $Path $owner | Out-Null
 }
@@ -46,7 +62,7 @@ function New-PrivateFile([string] $Path, [string] $Content) {
     $acl = New-Object Security.AccessControl.FileSecurity
     $acl.SetOwner([Security.Principal.SecurityIdentifier]$owner)
     $acl.SetAccessRuleProtection($true, $false)
-    foreach ($sid in @($owner) + $TrustedSystemSids) { $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow'))) }
+    foreach ($sid in @($owner) + $TrustedSystemSids) { $acl.AddAccessRule((New-AllowRule $sid $false)) }
     $stream.SetAccessControl($acl)
     $bytes = [Text.Encoding]::UTF8.GetBytes($Content); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true)
   } finally { $stream.Dispose() }
