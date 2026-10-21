@@ -1,0 +1,135 @@
+name: Windows CLI adapter compatibility
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-cli-adapter:
+    name: windows-2025-node-22
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.action == 'labeled' &&
+      github.event.label.name == 'ci:windows-cli' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Reject non-GitHub-hosted execution
+        if: runner.environment != 'github-hosted'
+        shell: pwsh
+        run: exit 1
+
+      - name: Checkout candidate without persisted credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify exact candidate SHA
+        id: candidate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $actual = git rev-parse HEAD
+          $expected = if ('${{ github.event_name }}' -eq 'pull_request') { '${{ github.event.pull_request.head.sha }}' } else { '${{ github.sha }}' }
+          if ($actual -ne $expected) { throw "Checked-out SHA does not match selected candidate: $actual != $expected" }
+          if ($actual -notmatch '^[0-9a-f]{40}$') { throw "Unexpected candidate SHA: $actual" }
+          "tested_sha=$actual" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Record required Windows and runtime evidence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $windows = Get-CimInstance Win32_OperatingSystem
+          $required = @(
+            "tested_sha=${{ steps.candidate.outputs.tested_sha }}"
+            "runner_os=$env:RUNNER_OS"
+            "runner_environment=$env:RUNNER_ENVIRONMENT"
+            "runner_image=$env:ImageOS"
+            "runner_image_version=$env:ImageVersion"
+            "windows_caption=$($windows.Caption)"
+            "windows_version=$($windows.Version)"
+            "windows_build=$($windows.BuildNumber)"
+            "node=$(node --version)"
+            "npm=$(npm --version)"
+          )
+          if ($required | Where-Object { $_ -match '=$' }) { throw 'Required CI evidence is unavailable' }
+          $required | Set-Content -Path windows-cli-evidence.txt -Encoding utf8
+          Get-Content windows-cli-evidence.txt | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Verify runner boundary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'GitHub-hosted runner required' }
+          if ($env:XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE) { throw 'CLI test mode must not be inherited by CI' }
+          Get-Command codex, claude, gemini -ErrorAction SilentlyContinue | ForEach-Object { throw "Provider CLI must not be preinstalled: $($_.Name)" }
+          node --version
+          npm --version
+
+      - name: Install lockfile dependencies without lifecycle scripts
+        shell: pwsh
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build workspace dependencies for boundary tests
+        shell: pwsh
+        run: npm run build:public
+
+      - name: Run Windows CLI fake-process suite
+        shell: pwsh
+        run: npx vitest run tests/backend/agent-cli-adapters.test.ts
+
+      - name: Run provider-boundary regressions
+        shell: pwsh
+        run: >-
+          npx vitest run
+          tests/backend/agent-ai-cloud-providers.test.ts
+          tests/backend/agent-ai-local-providers.test.ts
+          tests/backend/agent-provider-bridge.test.ts
+          tests/backend/agent-provider-config.test.ts
+          tests/backend/agent-product-origins.test.ts
+          tests/backend/provider-contracts-v1.test.ts
+          tests/backend/provider-bridge-client-v1.test.ts
+          tests/backend/agent-security-hardening.test.ts
+
+      - name: Build, typecheck, and test public packages
+        shell: pwsh
+        run: npm run verify:public
+
+      - name: Preserve non-secret Windows CI evidence
+        id: upload-evidence
+        if: ${{ always() && hashFiles('windows-cli-evidence.txt') != '' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-cli-evidence-${{ steps.candidate.outputs.tested_sha }}
+          path: windows-cli-evidence.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Require complete CI evidence for acceptance
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path windows-cli-evidence.txt)) { throw 'Required Windows CI evidence file is missing' }
+          $requiredKeys = 'tested_sha', 'runner_os', 'runner_environment', 'runner_image', 'runner_image_version', 'windows_caption', 'windows_version', 'windows_build', 'node', 'npm'
+          $evidence = Get-Content windows-cli-evidence.txt
+          foreach ($key in $requiredKeys) {
+            if (-not ($evidence | Where-Object { $_ -match "^$key=.+" })) { throw "Required Windows CI evidence is missing: $key" }
+          }
+          if ('${{ steps.upload-evidence.outcome }}' -ne 'success') { throw 'Evidence artifact upload failed; the run cannot support a complete technical acceptance' }
