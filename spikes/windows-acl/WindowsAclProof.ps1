@@ -61,7 +61,7 @@ function New-PrivateDirectory([string] $Path) {
 
 function New-PrivateFile([string] $Path, [string] $Content) {
   $owner = Get-CurrentSid
-  $parent = Split-Path -LiteralPath $Path -Parent
+  $parent = [IO.Path]::GetDirectoryName($Path)
   if ([IO.Path]::GetFullPath($Path) -ne $Path -or (Test-Path -LiteralPath $Path) -or -not (Test-Path -LiteralPath $parent) -or ((Get-Item -LiteralPath $parent).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unsafe target path' }
   $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
   try {
