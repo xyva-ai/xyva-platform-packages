@@ -52,7 +52,7 @@ public static class XyvaAclNative {
 function New-PrivateSddl([string] $OwnerSid, [bool] $Directory) {
   $inheritance = if ($Directory) { 'OICI' } else { '' }
   $aces = foreach ($sid in @($OwnerSid) + $TrustedSystemSids) { "(A;$inheritance;FA;;;$sid)" }
-  return "O:${OwnerSid}D:PA$($aces -join '')"
+  return "O:${OwnerSid}D:P$($aces -join '')"
 }
 
 function Get-AclEvidence([string] $Path) {
