@@ -31,6 +31,27 @@ function adapters(runner: CliProcessRunner, processes = new CliProcessManager())
   return createCliAdapters(runner, { resolver: trustedResolver, processes })
 }
 
+async function waitForRecordedPid(pidFile: string, timeoutMs = 2_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const pid = Number((await fs.readFile(pidFile, 'utf8')).trim())
+      if (Number.isSafeInteger(pid) && pid > 0) return pid
+    } catch { /* The parent process has not recorded its child yet. */ }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  throw new Error(`Timed out waiting for child PID at ${pidFile}`)
+}
+
+async function expectProcessToStop(pid: number, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try { process.kill(pid, 0) } catch { return }
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  throw new Error(`Process ${pid} remained alive after cleanup deadline`)
+}
+
 describe('official CLI adapter discovery', () => {
   it('discovers each supported CLI without prompts, model calls, or credential reads', async () => {
     const calls: Parameters<CliProcessRunner['run']>[0][] = []
@@ -177,9 +198,8 @@ describe('spawn process boundary', () => {
         command: process.execPath, args: ['-e', childCode], cwd: temporary, env: { PATH: process.env.PATH }, timeoutMs: 250, maxOutputBytes: 1024,
       })
       expect(result.timedOut).toBe(true)
-      const pid = Number(await fs.readFile(pidFile, 'utf8'))
-      await new Promise((resolve) => setTimeout(resolve, 25))
-      expect(() => process.kill(pid, 0)).toThrow()
+      const pid = await waitForRecordedPid(pidFile)
+      await expectProcessToStop(pid)
     } finally { await fs.rm(temporary, { recursive: true, force: true }) }
   })
 
@@ -192,9 +212,8 @@ describe('spawn process boundary', () => {
         command: process.execPath, args: ['-e', childCode], cwd: temporary, env: { PATH: process.env.PATH }, timeoutMs: 250, maxOutputBytes: 1024,
       })
       expect(result.timedOut).toBe(true)
-      const pid = Number(await fs.readFile(pidFile, 'utf8'))
-      await new Promise((resolve) => setTimeout(resolve, 25))
-      expect(() => process.kill(pid, 0)).toThrow()
+      const pid = await waitForRecordedPid(pidFile)
+      await expectProcessToStop(pid)
     } finally { await fs.rm(temporary, { recursive: true, force: true }) }
   })
 
