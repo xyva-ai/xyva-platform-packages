@@ -85,6 +85,10 @@ jobs:
         shell: pwsh
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      - name: Build workspace dependencies for boundary tests
+        shell: pwsh
+        run: npm run build:public
+
       - name: Run Windows CLI fake-process suite
         shell: pwsh
         run: npx vitest run tests/backend/agent-cli-adapters.test.ts
