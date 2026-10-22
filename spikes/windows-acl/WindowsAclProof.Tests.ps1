@@ -34,7 +34,7 @@ function Assert-EvidenceRejected($Evidence) {
   throw 'Malformed ACL evidence was accepted'
 }
 
-function Set-ControlAreaAcl([string] $Path, [bool] $Directory) {
+function Set-ControlAreaAcl([string] $Path, [bool] $Directory, [bool] $AllowUnprivilegedWrite = $false) {
   $owner = [Security.Principal.SecurityIdentifier]::new((Get-CurrentSid))
   $acl = if ($Directory) { [Security.AccessControl.DirectorySecurity]::new() } else { [Security.AccessControl.FileSecurity]::new() }
   $acl.SetOwner($owner)
@@ -43,7 +43,8 @@ function Set-ControlAreaAcl([string] $Path, [bool] $Directory) {
   foreach ($sid in @($owner.Value) + $TrustedSystemSids) {
     $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid), [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow))
   }
-  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'), [Security.AccessControl.FileSystemRights]::ReadAndExecute, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow))
+  $unprivilegedRights = if ($AllowUnprivilegedWrite) { [Security.AccessControl.FileSystemRights]::Modify } else { [Security.AccessControl.FileSystemRights]::ReadAndExecute }
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'), $unprivilegedRights, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow))
   Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
@@ -67,7 +68,7 @@ function Assert-KernelAccessDenied([scriptblock] $Operation, [string] $Unexpecte
   }
 }
 
-function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ProtectedFile, [string] $ProtectedRoot) {
+function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirectory, [string] $ProtectedFile, [string] $ProtectedRoot) {
   $name = "xyva-acl-" + [guid]::NewGuid().ToString('N').Substring(0, 11)
   $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
   $user = $null
@@ -77,13 +78,18 @@ function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ProtectedFil
     $user = New-LocalUser -Name $name -Password $password -AccountNeverExpires -ErrorAction Stop
     $token = [XyvaAclNative]::LogonInteractive($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password)
     [Security.Principal.WindowsIdentity]::RunImpersonated($token, [Action] {
-      $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+      $identity = [Security.Principal.WindowsIdentity]::GetCurrent($true)
       if ($identity.User.Value -ne $user.SID.Value -or $identity.User.Value -eq $originalSid) { throw 'Impersonation SID verification failed' }
       Add-Result 'impersonation-active-with-test-sid' 'PASS' 'effective SID matches disposable test user'
       if ([Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Impersonated token has administrator rights' }
       Add-Result 'impersonated-token-not-administrator' 'PASS' 'administrator role absent'
       if (([IO.File]::ReadAllText($ControlFile)) -ne 'control-readable') { throw 'Positive control read failed' }
       Add-Result 'unprivileged-positive-control-read' 'PASS' 'control file readable'
+      $controlWrite = Join-Path $ControlDirectory 'unprivileged-write.txt'
+      [IO.File]::WriteAllText($controlWrite, 'control-writeable')
+      if (([IO.File]::ReadAllText($controlWrite)) -ne 'control-writeable') { throw 'Positive control write verification failed' }
+      [IO.File]::Delete($controlWrite)
+      Add-Result 'unprivileged-positive-control-create' 'PASS' 'control directory writable'
       Assert-KernelAccessDenied { [IO.File]::ReadAllText($ProtectedFile) | Out-Null } 'Private file read unexpectedly succeeded'
       Add-Result 'unprivileged-private-file-read-denied' 'PASS' 'kernel denied read'
       Assert-KernelAccessDenied { [IO.File]::AppendAllText($ProtectedFile, 'x') } 'Private file write unexpectedly succeeded'
@@ -134,15 +140,18 @@ try {
   Invoke-RequiredTest 'comparable-parent-access-control-setup' {
     New-PrivateDirectory $accessRoot
     $script:controlFile = Join-Path $accessRoot 'control.txt'
+    $script:controlDirectory = Join-Path $accessRoot 'control-directory'
     $script:impersonationPrivateFile = Join-Path $accessRoot 'private.txt'
     $script:impersonationPrivateDirectory = Join-Path $accessRoot 'private-directory'
     New-PrivateFile $controlFile 'control-readable' | Out-Null
+    New-PrivateDirectory $controlDirectory
     New-PrivateFile $impersonationPrivateFile 'synthetic-secret' | Out-Null
     New-PrivateDirectory $impersonationPrivateDirectory
     Set-ControlAreaAcl $controlFile $false
+    Set-ControlAreaAcl $controlDirectory $true $true
     Set-ControlAreaAcl $accessRoot $true
   }
-  Invoke-RequiredTest 'unprivileged-effective-access-controls' { Test-UnprivilegedIdentity $controlFile $impersonationPrivateFile $impersonationPrivateDirectory }
+  Invoke-RequiredTest 'unprivileged-effective-access-controls' { Test-UnprivilegedIdentity $controlFile $controlDirectory $impersonationPrivateFile $impersonationPrivateDirectory }
 } catch {
   $failure = $_
 } finally {
