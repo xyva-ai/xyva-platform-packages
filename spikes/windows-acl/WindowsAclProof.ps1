@@ -10,6 +10,7 @@ if (-not ('XyvaAclNative' -as [type])) {
   Add-Type @'
 using System;
 using System.ComponentModel;
+using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 
 public static class XyvaAclNative {
@@ -34,6 +35,8 @@ public static class XyvaAclNative {
   static extern uint GetSecurityInfo(IntPtr handle, uint objectType, uint securityInfo,
     out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
   [DllImport("advapi32.dll", SetLastError = true)] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
+  [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern bool LogonUser(string username, string domain, string password, int logonType, int provider, out SafeAccessTokenHandle token);
 
   public static SECURITY_ATTRIBUTES SecurityAttributes(string sddl) {
     IntPtr descriptor; uint size;
@@ -68,6 +71,12 @@ public static class XyvaAclNative {
       Marshal.Copy(descriptor, bytes, 0, (int)length);
       return bytes;
     } finally { LocalFree(descriptor); }
+  }
+  public static SafeAccessTokenHandle LogonInteractive(string username, string domain, string password) {
+    SafeAccessTokenHandle token;
+    if (!LogonUser(username, domain, password, 2, 0, out token))
+      throw new Win32Exception(Marshal.GetLastWin32Error());
+    return token;
   }
 }
 '@
