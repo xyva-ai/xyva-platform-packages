@@ -30,6 +30,10 @@ public static class XyvaAclNative {
     uint disposition, uint flagsAndAttributes, IntPtr templateFile);
   [DllImport("kernel32.dll", SetLastError = true)] public static extern bool CloseHandle(IntPtr handle);
   [DllImport("kernel32.dll")] public static extern IntPtr LocalFree(IntPtr memory);
+  [DllImport("advapi32.dll", SetLastError = true)]
+  static extern uint GetSecurityInfo(IntPtr handle, uint objectType, uint securityInfo,
+    out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
+  [DllImport("advapi32.dll", SetLastError = true)] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
 
   public static SECURITY_ATTRIBUTES SecurityAttributes(string sddl) {
     IntPtr descriptor; uint size;
@@ -45,6 +49,26 @@ public static class XyvaAclNative {
     if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
     return handle;
   }
+  public static IntPtr OpenForSecurityQuery(string path, bool directory) {
+    SECURITY_ATTRIBUTES unused = new SECURITY_ATTRIBUTES();
+    uint flags = directory ? 0x02000000U : 0x80U;
+    IntPtr handle = CreateFile(path, 0x00020000, 0x00000003, ref unused, 3, flags, IntPtr.Zero);
+    if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    return handle;
+  }
+  public static byte[] HandleSecurityDescriptor(IntPtr handle) {
+    IntPtr owner, group, dacl, sacl, descriptor;
+    uint result = GetSecurityInfo(handle, 1, 0x00000001 | 0x00000004,
+      out owner, out group, out dacl, out sacl, out descriptor);
+    if (result != 0) throw new Win32Exception((int)result);
+    try {
+      uint length = GetSecurityDescriptorLength(descriptor);
+      if (length == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+      byte[] bytes = new byte[length];
+      Marshal.Copy(descriptor, bytes, 0, (int)length);
+      return bytes;
+    } finally { LocalFree(descriptor); }
+  }
 }
 '@
 }
@@ -55,44 +79,71 @@ function New-PrivateSddl([string] $OwnerSid, [bool] $Directory) {
   return "O:${OwnerSid}D:P$($aces -join '')"
 }
 
-function Get-AclEvidence([string] $Path) {
-  $acl = Get-Acl -LiteralPath $Path
-  $owner = [string]$acl.Owner
-  try {
-    $ownerSid = [Security.Principal.SecurityIdentifier]::new($owner).Value
-  } catch {
-    $ownerSid = ([Security.Principal.NTAccount]::new($owner)).Translate([Security.Principal.SecurityIdentifier]).Value
-  }
+function Get-AclEvidenceFromHandle([IntPtr] $Handle) {
+  $raw = [Security.AccessControl.RawSecurityDescriptor]::new([XyvaAclNative]::HandleSecurityDescriptor($Handle), 0)
   [pscustomobject]@{
-    Owner = $ownerSid
-    Protected = $acl.AreAccessRulesProtected
-    Entries = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | ForEach-Object {
-      [pscustomobject]@{ Sid = $_.IdentityReference.Value; Type = $_.AccessControlType.ToString(); Rights = [int]$_.FileSystemRights; Inherited = $_.IsInherited }
+    Owner = if ($null -eq $raw.Owner) { $null } else { $raw.Owner.Value }
+    DaclPresent = [bool]($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent)
+    Protected = [bool]($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected)
+    DaclNull = $null -eq $raw.DiscretionaryAcl
+    Entries = @($raw.DiscretionaryAcl | ForEach-Object {
+      [pscustomobject]@{
+        AceKind = $_.GetType().FullName
+        Type = if ($_ -is [Security.AccessControl.CommonAce]) { $_.AceQualifier.ToString() } else { 'Unknown' }
+        Sid = if ($_ -is [Security.AccessControl.KnownAce]) { $_.SecurityIdentifier.Value } else { $null }
+        Rights = if ($_ -is [Security.AccessControl.KnownAce]) { $_.AccessMask } else { $null }
+        Inherited = [bool]($_.AceFlags -band [Security.AccessControl.AceFlags]::Inherited)
+        Flags = [int]$_.AceFlags
+      }
     })
   }
 }
 
-function Assert-PrivateAcl([string] $Path, [string] $OwnerSid) {
-  $evidence = Get-AclEvidence $Path
-  if ($evidence.Owner -ne $OwnerSid -or -not $evidence.Protected) { throw 'Owner or inheritance protection verification failed' }
-  foreach ($ace in $evidence.Entries) {
-    if ($ace.Type -ne 'Allow' -or $ace.Inherited -or $BroadSids -contains $ace.Sid -or ($ace.Sid -ne $OwnerSid -and $TrustedSystemSids -notcontains $ace.Sid)) { throw "Unexpected ACE: $($ace.Sid)" }
+function Get-AclEvidenceFromPath([string] $Path, [bool] $Directory = $false) {
+  $handle = [XyvaAclNative]::OpenForSecurityQuery($Path, $Directory)
+  try { return Get-AclEvidenceFromHandle $handle } finally { [void][XyvaAclNative]::CloseHandle($handle) }
+}
+
+function Assert-PrivateAclEvidence($Evidence, [string] $OwnerSid, [bool] $Directory) {
+  $expectedFlags = if ($Directory) { [int]([Security.AccessControl.AceFlags]::ContainerInherit -bor [Security.AccessControl.AceFlags]::ObjectInherit) } else { 0 }
+  $expectedSids = @($OwnerSid) + $TrustedSystemSids
+  $fullControl = [int][Security.AccessControl.FileSystemRights]::FullControl
+  if ($Evidence.Owner -ne $OwnerSid -or -not $Evidence.DaclPresent -or $Evidence.DaclNull -or -not $Evidence.Protected -or $Evidence.Entries.Count -ne $expectedSids.Count) { throw 'Owner, DACL presence, DACL protection, or ACE count verification failed' }
+  $seen = @{}
+  foreach ($ace in $Evidence.Entries) {
+    if ($ace.AceKind -ne 'System.Security.AccessControl.CommonAce' -or $ace.Type -ne 'AccessAllowed' -or $null -eq $ace.Sid -or $ace.Inherited -or $ace.Flags -ne $expectedFlags -or $ace.Rights -ne $fullControl -or $BroadSids -contains $ace.Sid -or $expectedSids -notcontains $ace.Sid) { throw "Unexpected ACE: $($ace.Sid)" }
+    if ($seen.ContainsKey($ace.Sid)) { throw "Duplicate ACE: $($ace.Sid)" }
+    $seen[$ace.Sid] = $true
   }
-  return $evidence
+  foreach ($sid in $expectedSids) { if (-not $seen.ContainsKey($sid)) { throw "Required ACE missing: $sid" } }
+  return $Evidence
+}
+
+function Assert-SafeParentChain([string] $Path) {
+  $cursor = [IO.Path]::GetDirectoryName($Path)
+  while (-not [string]::IsNullOrEmpty($cursor)) {
+    $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Unsafe reparse point in parent chain: $cursor" }
+    $next = [IO.Path]::GetDirectoryName($cursor)
+    if ($next -eq $cursor) { break }
+    $cursor = $next
+  }
 }
 
 function New-PrivateDirectory([string] $Path) {
   $owner = Get-CurrentSid
   if ([IO.Path]::GetFullPath($Path) -ne $Path -or (Test-Path -LiteralPath $Path)) { throw 'Unsafe target path' }
+  Assert-SafeParentChain $Path
   $attributes = [XyvaAclNative]::SecurityAttributes((New-PrivateSddl $owner $true))
   try { [XyvaAclNative]::CreatePrivateDirectory($Path, [ref]$attributes) } finally { [void][XyvaAclNative]::LocalFree($attributes.lpSecurityDescriptor) }
-  Assert-PrivateAcl $Path $owner | Out-Null
+  Assert-PrivateAclEvidence (Get-AclEvidenceFromPath $Path $true) $owner $true | Out-Null
 }
 
 function New-PrivateFile([string] $Path, [string] $Content) {
   $owner = Get-CurrentSid
   $parent = [IO.Path]::GetDirectoryName($Path)
-  if ([IO.Path]::GetFullPath($Path) -ne $Path -or (Test-Path -LiteralPath $Path) -or -not (Test-Path -LiteralPath $parent) -or ((Get-Item -LiteralPath $parent).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unsafe target path' }
+  if ([IO.Path]::GetFullPath($Path) -ne $Path -or (Test-Path -LiteralPath $Path) -or -not (Test-Path -LiteralPath $parent)) { throw 'Unsafe target path' }
+  Assert-SafeParentChain $Path
   $attributes = [XyvaAclNative]::SecurityAttributes((New-PrivateSddl $owner $false))
   $handle = [IntPtr]::Zero
   $stream = $null
@@ -100,11 +151,13 @@ function New-PrivateFile([string] $Path, [string] $Content) {
     $handle = [XyvaAclNative]::CreatePrivateFile($Path, [ref]$attributes)
     $safeHandle = [Microsoft.Win32.SafeHandles.SafeFileHandle]::new($handle, $true)
     $stream = [IO.FileStream]::new($safeHandle, [IO.FileAccess]::Write)
+    $beforeWrite = Assert-PrivateAclEvidence (Get-AclEvidenceFromHandle $stream.SafeFileHandle.DangerousGetHandle()) $owner $false
     $bytes = [Text.Encoding]::UTF8.GetBytes($Content); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true)
+    $afterWrite = Assert-PrivateAclEvidence (Get-AclEvidenceFromHandle $stream.SafeFileHandle.DangerousGetHandle()) $owner $false
   } finally {
     if ($null -ne $stream) { $stream.Dispose() }
     elseif ($null -ne $handle -and $handle -ne [IntPtr]::Zero) { [void][XyvaAclNative]::CloseHandle($handle) }
     [void][XyvaAclNative]::LocalFree($attributes.lpSecurityDescriptor)
   }
-  Assert-PrivateAcl $Path $owner
+  return [pscustomobject]@{ BeforeWrite = $beforeWrite; AfterWrite = $afterWrite }
 }
