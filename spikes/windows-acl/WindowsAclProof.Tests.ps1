@@ -33,7 +33,7 @@ function Assert-EvidenceRejected($Evidence) {
 }
 
 function Test-UnprivilegedIdentity([string] $ProtectedFile, [string] $ProtectedRoot) {
-  $name = "xyva-acl-" + [guid]::NewGuid().ToString('N').Substring(0, 12)
+  $name = "xyva-acl-" + [guid]::NewGuid().ToString('N').Substring(0, 11)
   $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
   $user = $null
   try {
