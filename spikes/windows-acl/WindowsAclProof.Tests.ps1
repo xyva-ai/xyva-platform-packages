@@ -41,12 +41,13 @@ function Test-UnprivilegedIdentity([string] $ProtectedFile, [string] $ProtectedR
     $credential = [pscredential]::new("$env:COMPUTERNAME\$name", $password)
     $target = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($ProtectedFile))
     $readCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$target = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('$target')); try { [IO.File]::ReadAllText(`$target); exit 41 } catch { exit 0 }"))
-    $process = Start-Process -FilePath 'pwsh' -Credential $credential -ArgumentList "-NoProfile -NonInteractive -EncodedCommand $readCommand" -Wait -PassThru
+    $pwsh = Join-Path $PSHOME 'pwsh.exe'
+    $process = Start-Process -FilePath $pwsh -Credential $credential -LoadUserProfile -WorkingDirectory $env:SystemRoot -ArgumentList "-NoProfile -NonInteractive -EncodedCommand $readCommand" -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Unprivileged read probe returned $($process.ExitCode)" }
     $junction = Join-Path $ProtectedRoot 'unprivileged-junction'
     $target = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($junction))
     $junctionCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$target = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('$target')); try { New-Item -ItemType Junction -Path `$target -Target `$env:TEMP -ErrorAction Stop | Out-Null; exit 42 } catch { exit 0 }"))
-    $process = Start-Process -FilePath 'pwsh' -Credential $credential -ArgumentList "-NoProfile -NonInteractive -EncodedCommand $junctionCommand" -Wait -PassThru
+    $process = Start-Process -FilePath $pwsh -Credential $credential -LoadUserProfile -WorkingDirectory $env:SystemRoot -ArgumentList "-NoProfile -NonInteractive -EncodedCommand $junctionCommand" -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Unprivileged parent reparse probe returned $($process.ExitCode)" }
   } finally {
     if ($null -ne $user) { Remove-LocalUser -Name $name -ErrorAction SilentlyContinue }
