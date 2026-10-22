@@ -37,6 +37,11 @@ public static class XyvaAclNative {
   [DllImport("advapi32.dll", SetLastError = true)] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
   [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
   static extern bool LogonUser(string username, string domain, string password, int logonType, int provider, out SafeAccessTokenHandle token);
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct STARTUPINFO { public int cb; public string lpReserved, lpDesktop, lpTitle; public int dwX,dwY,dwXSize,dwYSize,dwXCountChars,dwYCountChars,dwFillAttribute; public int dwFlags; public short wShowWindow,wReserved2; public IntPtr lpReserved2,hStdInput,hStdOutput,hStdError; }
+  [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION { public IntPtr hProcess,hThread; public int dwProcessId,dwThreadId; }
+  [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessWithLogonW(string user, string domain, string password, uint logonFlags, string application, string commandLine, uint creationFlags, IntPtr environment, string currentDirectory, ref STARTUPINFO startup, out PROCESS_INFORMATION process);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr handle, out uint exitCode);
 
   public static SECURITY_ATTRIBUTES SecurityAttributes(string sddl) {
     IntPtr descriptor; uint size;
@@ -77,6 +82,12 @@ public static class XyvaAclNative {
     if (!LogonUser(username, domain, password, 2, 0, out token))
       throw new Win32Exception(Marshal.GetLastWin32Error());
     return token;
+  }
+  public static int RunProcessWithLogon(string username, string domain, string password, string application, string commandLine, string currentDirectory) {
+    STARTUPINFO startup = new STARTUPINFO(); startup.cb = Marshal.SizeOf(typeof(STARTUPINFO)); PROCESS_INFORMATION process;
+    if (!CreateProcessWithLogonW(username, domain, password, 1, application, commandLine, 0x08000000, IntPtr.Zero, currentDirectory, ref startup, out process)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    try { if (WaitForSingleObject(process.hProcess, 30000) != 0) throw new TimeoutException("Second-process probe timed out"); uint exitCode; if (!GetExitCodeProcess(process.hProcess, out exitCode)) throw new Win32Exception(Marshal.GetLastWin32Error()); return unchecked((int)exitCode); }
+    finally { if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread); if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess); }
   }
 }
 '@
