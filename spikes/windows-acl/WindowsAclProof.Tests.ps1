@@ -5,6 +5,7 @@ param(
 . "$PSScriptRoot/WindowsAclProof.ps1"
 $root = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-poc-" + [guid]::NewGuid())
 $accessRoot = $null
+$failure = $null
 $results = [System.Collections.Generic.List[object]]::new()
 
 function Add-Result([string] $Name, [string] $Status, [string] $Detail) {
