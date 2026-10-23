@@ -221,12 +221,10 @@ function New-PrivateSecurityAttributes([string] $Sddl) {
 
 function Get-AclEvidenceFromHandle([IntPtr] $Handle) {
   $raw = [Security.AccessControl.RawSecurityDescriptor]::new([XyvaAclNative]::HandleSecurityDescriptor($Handle), 0)
-  [pscustomobject]@{
-    Owner = if ($null -eq $raw.Owner) { $null } else { $raw.Owner.Value }
-    DaclPresent = [bool]($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent)
-    Protected = [bool]($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected)
-    DaclNull = $null -eq $raw.DiscretionaryAcl
-    Entries = @($raw.DiscretionaryAcl | ForEach-Object {
+  $entries = if ($null -eq $raw.DiscretionaryAcl) {
+    @()
+  } else {
+    @($raw.DiscretionaryAcl | ForEach-Object {
       [pscustomobject]@{
         AceKind = $_.GetType().FullName
         Type = if ($_ -is [Security.AccessControl.CommonAce]) { $_.AceQualifier.ToString() } else { 'Unknown' }
@@ -236,6 +234,13 @@ function Get-AclEvidenceFromHandle([IntPtr] $Handle) {
         Flags = [int]$_.AceFlags
       }
     })
+  }
+  [pscustomobject]@{
+    Owner = if ($null -eq $raw.Owner) { $null } else { $raw.Owner.Value }
+    DaclPresent = [bool]($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclPresent)
+    Protected = [bool]($raw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected)
+    DaclNull = $null -eq $raw.DiscretionaryAcl
+    Entries = $entries
   }
 }
 
