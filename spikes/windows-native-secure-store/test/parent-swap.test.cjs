@@ -22,11 +22,15 @@ if (process.platform !== 'win32') {
   }
 
   function createJunction(link, target) {
-    execFileSync('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', junctionScript, link, target], { stdio: 'pipe' });
+    execFileSync('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', junctionScript, link, target], {
+      stdio: 'pipe',
+      timeout: 10_000,
+      windowsHide: true,
+    });
   }
 
   for (const [kind, leaf] of [['file', 'swapped-file'], ['directory', 'swapped-directory']]) {
-    test(`handle-relative ${kind} creation survives a parent junction swap`, async () => {
+    test(`handle-relative ${kind} creation survives a parent junction swap`, { timeout: 30_000 }, async () => {
       const basePath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-parent-swap-'));
       const rootPath = path.join(basePath, 'trusted-root');
       const movedPath = path.join(basePath, 'trusted-root-moved');
