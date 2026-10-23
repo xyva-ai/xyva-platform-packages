@@ -1,0 +1,48 @@
+name: Windows native secure-store adapter spike
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+permissions:
+  contents: read
+jobs:
+  native-x64:
+    if: github.event.label.name == 'ci:windows-native-adapter' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == 'main'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - if: runner.environment != 'github-hosted'
+        shell: pwsh
+        run: exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.1
+      - name: Build and test the Node 22 x64 binary
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -ne '${{ github.event.pull_request.head.sha }}') { throw 'Head SHA mismatch' }
+          node --version; npm --version; cl.exe 2>$null | Select-Object -First 1
+          npm --prefix spikes/windows-native-secure-store ci --ignore-scripts --no-audit --no-fund
+          npm --prefix spikes/windows-native-secure-store run build
+          npm --prefix spikes/windows-native-secure-store test
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          @{ sha=(git rev-parse HEAD); node=(node --version); npm=(npm --version); architecture=$env:PROCESSOR_ARCHITECTURE; runner=$env:ImageOS; imageVersion=$env:ImageVersion } | ConvertTo-Json | Set-Content evidence/windows-native-store.json -Encoding utf8NoBOM
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+      - name: Test the exact Node 22-built binary on Node 24
+        shell: pwsh
+        run: |
+          npm --prefix spikes/windows-native-secure-store test
+          Add-Content evidence/windows-native-store.json ("`nnode24=" + (node --version))
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: windows-native-secure-store-evidence-${{ github.run_id }}
+          path: evidence/windows-native-store.json
+          if-no-files-found: error
+          retention-days: 14

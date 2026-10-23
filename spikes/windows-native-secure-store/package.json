@@ -1,0 +1,13 @@
+{
+  "name": "@xyva/windows-native-secure-store-spike",
+  "private": true,
+  "version": "0.0.0-security-spike",
+  "type": "commonjs",
+  "engines": { "node": ">=22 <25" },
+  "scripts": {
+    "build": "node-gyp rebuild --napi_build_version=8",
+    "build:test": "node-gyp rebuild --napi_build_version=8 --target=windows_native_secure_store_test",
+    "test": "node --expose-gc --test test/*.test.cjs"
+  },
+  "devDependencies": { "node-gyp": "11.4.2" }
+}
