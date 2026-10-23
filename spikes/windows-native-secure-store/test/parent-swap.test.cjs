@@ -12,7 +12,7 @@ if (process.platform !== 'win32') {
   test('Windows parent-swap resistance', { skip: 'requires native Windows' }, () => {});
 } else {
   const addon = require('../index-test.cjs');
-  const junctionScript = path.join(__dirname, 'create-junction.ps1');
+  const swapScript = path.join(__dirname, 'swap-parent.ps1');
 
   function onceMessage(worker) {
     return new Promise((resolve, reject) => {
@@ -21,8 +21,8 @@ if (process.platform !== 'win32') {
     });
   }
 
-  function createJunction(link, target) {
-    execFileSync('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', junctionScript, link, target], {
+  function swapParent(root, moved, outside) {
+    execFileSync('pwsh.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', swapScript, root, moved, outside], {
       stdio: 'pipe',
       timeout: 10_000,
       windowsHide: true,
@@ -65,8 +65,7 @@ if (process.platform !== 'win32') {
         configured = true;
         addon.waitTestBarrier(reached, 10_000);
         assert.equal(fs.existsSync(path.join(rootPath, leaf)), false);
-        fs.renameSync(rootPath, movedPath);
-        createJunction(rootPath, outsidePath);
+        swapParent(rootPath, movedPath, outsidePath);
         junctionCreated = true;
         addon.signalTestBarrier(proceed);
         released = true;
