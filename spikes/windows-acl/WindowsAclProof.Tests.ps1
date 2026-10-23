@@ -221,7 +221,7 @@ try {
     New-PrivateDirectory $source | Out-Null
     Move-Item -LiteralPath $source -Destination $moved -ErrorAction Stop
     Remove-Item -LiteralPath $moved -Recurse -Force -ErrorAction Stop
-    if (Test-Path -LiteralPath $source -or Test-Path -LiteralPath $moved) { throw 'Directory handle prevented cleanup' }
+    if ((Test-Path -LiteralPath $source) -or (Test-Path -LiteralPath $moved)) { throw 'Directory handle prevented cleanup' }
   }
   Invoke-RequiredTest 'fail-closed-null-missing-empty-and-manipulated-acl' {
     $base = $creation.AfterWrite
