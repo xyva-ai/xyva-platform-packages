@@ -4,6 +4,8 @@ $ErrorActionPreference = 'Stop'
 $TrustedSystemSids = @('S-1-5-18', 'S-1-5-32-544') # LocalSystem and BUILTIN\Administrators: trusted OS recovery identities.
 $BroadSids = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545') # Everyone, Authenticated Users, BUILTIN\Users.
 $script:BeforePrivateCreateHook = $null # Test-only deterministic race barrier; unset in production-shaped paths.
+$script:BeforePrivateDirectoryCreateHook = $null
+$script:BeforeSecurityDescriptorHook = $null
 
 function Get-CurrentSid { [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
 
@@ -125,6 +127,10 @@ public static class XyvaAclNative {
   public static IntPtr CreatePrivateFileRelative(IntPtr parent, string name, IntPtr securityDescriptor) {
     return OpenRelative(parent, name, 0x40120000, 2, 0x00000060, securityDescriptor);
   }
+  public static IntPtr CreatePrivateDirectoryRelative(IntPtr parent, string name, IntPtr securityDescriptor) {
+    IntPtr handle = OpenRelative(parent, name, 0x001200A1, 2, 0x00000021, securityDescriptor);
+    try { AssertNotReparse(handle); return handle; } catch { CloseHandle(handle); throw; }
+  }
   public static string HandleIdentity(IntPtr handle) {
     BY_HANDLE_FILE_INFORMATION info; if (!GetFileInformationByHandle(handle, out info)) throw new Win32Exception(Marshal.GetLastWin32Error());
     return String.Format("volume={0:X8};file={1:X8}{2:X8};attributes={3:X8}", info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow, info.FileAttributes);
@@ -141,6 +147,11 @@ function New-PrivateSddl([string] $OwnerSid, [bool] $Directory) {
   $inheritance = if ($Directory) { 'OICI' } else { '' }
   $aces = foreach ($sid in @($OwnerSid) + $TrustedSystemSids) { "(A;$inheritance;FA;;;$sid)" }
   return "O:${OwnerSid}D:P$($aces -join '')"
+}
+
+function New-PrivateSecurityAttributes([string] $Sddl) {
+  if ($null -ne $script:BeforeSecurityDescriptorHook) { & $script:BeforeSecurityDescriptorHook }
+  return [XyvaAclNative]::SecurityAttributes($Sddl)
 }
 
 function Get-AclEvidenceFromHandle([IntPtr] $Handle) {
@@ -217,36 +228,51 @@ function Open-ValidatedParentHandle([string] $Path) {
   }
 }
 
+function Close-ParentResolution($Parent) {
+  if ($null -eq $Parent) { return }
+  if ($Parent.Handle -ne $Parent.RootHandle) { [void][XyvaAclNative]::CloseHandle($Parent.Handle) }
+  [void][XyvaAclNative]::CloseHandle($Parent.RootHandle)
+}
+
 function New-PrivateDirectory([string] $Path) {
   $owner = Get-CurrentSid
-  if ([IO.Path]::GetFullPath($Path) -ne $Path -or (Test-Path -LiteralPath $Path)) { throw 'Unsafe target path' }
-  Assert-SafeParentChain $Path
-  $attributes = [XyvaAclNative]::SecurityAttributes((New-PrivateSddl $owner $true))
-  try { [XyvaAclNative]::CreatePrivateDirectory($Path, [ref]$attributes) } finally { [void][XyvaAclNative]::LocalFree($attributes.lpSecurityDescriptor) }
-  Assert-PrivateAclEvidence (Get-AclEvidenceFromPath $Path $true) $owner $true | Out-Null
+  $parent = $null; $attributes = $null; $handle = [IntPtr]::Zero
+  try {
+    if ([IO.Path]::GetFullPath($Path) -ne $Path) { throw 'Unsafe target path' }
+    $parent = Open-ValidatedParentHandle $Path
+    if ($null -ne $script:BeforePrivateDirectoryCreateHook) { & $script:BeforePrivateDirectoryCreateHook $parent }
+    $attributes = New-PrivateSecurityAttributes (New-PrivateSddl $owner $true)
+    $handle = [XyvaAclNative]::CreatePrivateDirectoryRelative($parent.Handle, $parent.Leaf, $attributes.lpSecurityDescriptor)
+    $evidence = Assert-PrivateAclEvidence (Get-AclEvidenceFromHandle $handle) $owner $true
+    $identity = [XyvaAclNative]::HandleIdentity($handle)
+    return [pscustomobject]@{ Evidence = $evidence; Identity = $identity; RootIdentity = $parent.RootIdentity; ParentIdentity = $parent.ParentIdentity }
+  } finally {
+    if ($handle -ne [IntPtr]::Zero) { [void][XyvaAclNative]::CloseHandle($handle) }
+    if ($null -ne $attributes) { [void][XyvaAclNative]::LocalFree($attributes.lpSecurityDescriptor) }
+    Close-ParentResolution $parent
+  }
 }
 
 function New-PrivateFile([string] $Path, [string] $Content) {
   $owner = Get-CurrentSid
-  if ([IO.Path]::GetFullPath($Path) -ne $Path) { throw 'Unsafe target path' }
-  $parent = Open-ValidatedParentHandle $Path
-  if ($null -ne $script:BeforePrivateCreateHook) { & $script:BeforePrivateCreateHook $parent }
-  $attributes = [XyvaAclNative]::SecurityAttributes((New-PrivateSddl $owner $false))
-  $handle = [IntPtr]::Zero
-  $stream = $null
+  $parent = $null; $attributes = $null; $handle = [IntPtr]::Zero; $safeHandle = $null; $stream = $null
   try {
+    if ([IO.Path]::GetFullPath($Path) -ne $Path) { throw 'Unsafe target path' }
+    $parent = Open-ValidatedParentHandle $Path
+    if ($null -ne $script:BeforePrivateCreateHook) { & $script:BeforePrivateCreateHook $parent }
+    $attributes = New-PrivateSecurityAttributes (New-PrivateSddl $owner $false)
     $handle = [XyvaAclNative]::CreatePrivateFileRelative($parent.Handle, $parent.Leaf, $attributes.lpSecurityDescriptor)
-    $safeHandle = [Microsoft.Win32.SafeHandles.SafeFileHandle]::new($handle, $true)
+    $safeHandle = [Microsoft.Win32.SafeHandles.SafeFileHandle]::new($handle, $true); $handle = [IntPtr]::Zero
     $stream = [IO.FileStream]::new($safeHandle, [IO.FileAccess]::Write)
     $beforeWrite = Assert-PrivateAclEvidence (Get-AclEvidenceFromHandle $stream.SafeFileHandle.DangerousGetHandle()) $owner $false
     $bytes = [Text.Encoding]::UTF8.GetBytes($Content); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true)
     $afterWrite = Assert-PrivateAclEvidence (Get-AclEvidenceFromHandle $stream.SafeFileHandle.DangerousGetHandle()) $owner $false
   } finally {
     if ($null -ne $stream) { $stream.Dispose() }
+    elseif ($null -ne $safeHandle) { $safeHandle.Dispose() }
     elseif ($null -ne $handle -and $handle -ne [IntPtr]::Zero) { [void][XyvaAclNative]::CloseHandle($handle) }
-    [void][XyvaAclNative]::LocalFree($attributes.lpSecurityDescriptor)
-    if ($parent.Handle -ne $parent.RootHandle) { [void][XyvaAclNative]::CloseHandle($parent.Handle) }
-    [void][XyvaAclNative]::CloseHandle($parent.RootHandle)
+    if ($null -ne $attributes) { [void][XyvaAclNative]::LocalFree($attributes.lpSecurityDescriptor) }
+    Close-ParentResolution $parent
   }
   return [pscustomobject]@{ BeforeWrite = $beforeWrite; AfterWrite = $afterWrite; RootIdentity = $parent.RootIdentity; ParentIdentity = $parent.ParentIdentity }
 }

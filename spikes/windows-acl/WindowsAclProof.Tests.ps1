@@ -16,6 +16,7 @@ $accessRoot = $null
 $failure = $null
 $results = [System.Collections.Generic.List[object]]::new()
 $script:RaceEvidence = $null
+$script:DirectoryRaceEvidence = $null
 
 function Add-Result([string] $Name, [string] $Status, [string] $Detail) {
   $results.Add([pscustomobject]@{ Requirement = $Name; Status = $Status; Detail = $Detail })
@@ -73,6 +74,22 @@ function Get-Win32ErrorCode([Exception] $Exception) {
     $current = $current.InnerException
   }
   return $null
+}
+
+function Assert-NativeCollision([scriptblock] $Operation) {
+  try { & $Operation } catch {
+    if (@(80, 183) -contains (Get-Win32ErrorCode $_.Exception)) { return }
+    throw
+  }
+  throw 'Existing target was overwritten or accepted'
+}
+
+function Assert-InjectedFailure([scriptblock] $Operation, [string] $ExpectedMessage) {
+  try { & $Operation } catch {
+    if ($_.Exception.Message -eq $ExpectedMessage) { return }
+    throw
+  }
+  throw 'Injected failure did not occur'
 }
 
 function Assert-KernelAccessDenied([scriptblock] $Operation, [string] $UnexpectedSuccess) {
@@ -158,18 +175,53 @@ function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirec
 }
 
 try {
-  Invoke-RequiredTest 'private-directory-create' { New-PrivateDirectory $root }
+  $rootCreation = $null
+  Invoke-RequiredTest 'private-directory-create' { $script:rootCreation = New-PrivateDirectory $root }
+  Invoke-RequiredTest 'directory-handle-bound-acl' { Assert-PrivateAclEvidence $rootCreation.Evidence (Get-CurrentSid) $true | Out-Null }
   $file = Join-Path $root 'secret.txt'
   $creation = $null
   Invoke-RequiredTest 'handle-bound-acl-before-and-after-write' { $script:creation = New-PrivateFile $file 'synthetic-secret' }
   Invoke-RequiredTest 'authorized-owner-read' { if ((Get-Content -LiteralPath $file -Raw) -ne 'synthetic-secret') { throw 'Authorized read failed' } }
   Invoke-RequiredTest 'complete-dacl-and-owner-model' { Assert-PrivateAclEvidence $creation.BeforeWrite (Get-CurrentSid) $false | Out-Null; Assert-PrivateAclEvidence $creation.AfterWrite (Get-CurrentSid) $false | Out-Null }
   Invoke-RequiredTest 'existing-target-native-create-rejected' {
-    try { New-PrivateFile $file 'must-not-overwrite' | Out-Null } catch {
-      if (@(80, 183) -contains (Get-Win32ErrorCode $_.Exception)) { return }
-      throw
-    }
-    throw 'Existing target was overwritten or accepted'
+    Assert-NativeCollision { New-PrivateFile $file 'must-not-overwrite' | Out-Null }
+  }
+  Invoke-RequiredTest 'existing-directory-native-create-rejected' {
+    Assert-NativeCollision { New-PrivateDirectory $root | Out-Null }
+  }
+  Invoke-RequiredTest 'file-hook-failure-cleans-parent-handles' {
+    $target = Join-Path $root 'file-hook-failure.txt'
+    try {
+      $script:BeforePrivateCreateHook = { throw 'injected file hook failure' }
+      Assert-InjectedFailure { New-PrivateFile $target 'synthetic-secret' | Out-Null } 'injected file hook failure'
+      if (Test-Path -LiteralPath $target) { throw 'File hook failure created a target' }
+    } finally { $script:BeforePrivateCreateHook = $null }
+    New-PrivateFile $target 'synthetic-secret' | Out-Null
+  }
+  Invoke-RequiredTest 'directory-descriptor-failure-cleans-parent-handles' {
+    $target = Join-Path $root 'directory-descriptor-failure'
+    try {
+      $script:BeforeSecurityDescriptorHook = { throw 'injected descriptor failure' }
+      Assert-InjectedFailure { New-PrivateDirectory $target | Out-Null } 'injected descriptor failure'
+      if (Test-Path -LiteralPath $target) { throw 'Descriptor failure created a directory' }
+    } finally { $script:BeforeSecurityDescriptorHook = $null }
+    New-PrivateDirectory $target | Out-Null
+  }
+  Invoke-RequiredTest 'directory-hook-failure-cleans-parent-handles' {
+    $target = Join-Path $root 'directory-hook-failure'
+    try {
+      $script:BeforePrivateDirectoryCreateHook = { throw 'injected directory hook failure' }
+      Assert-InjectedFailure { New-PrivateDirectory $target | Out-Null } 'injected directory hook failure'
+      if (Test-Path -LiteralPath $target) { throw 'Directory hook failure created a target' }
+    } finally { $script:BeforePrivateDirectoryCreateHook = $null }
+    New-PrivateDirectory $target | Out-Null
+  }
+  Invoke-RequiredTest 'directory-handle-cleanup-allows-rename-and-remove' {
+    $source = Join-Path $root 'cleanup-directory'; $moved = Join-Path $root 'cleanup-directory-moved'
+    New-PrivateDirectory $source | Out-Null
+    Move-Item -LiteralPath $source -Destination $moved -ErrorAction Stop
+    Remove-Item -LiteralPath $moved -Recurse -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $source -or Test-Path -LiteralPath $moved) { throw 'Directory handle prevented cleanup' }
   }
   Invoke-RequiredTest 'fail-closed-null-missing-empty-and-manipulated-acl' {
     $base = $creation.AfterWrite
@@ -189,6 +241,15 @@ try {
     $junction = Join-Path $root 'reparse-parent'
     New-Item -ItemType Junction -Path $junction -Target $outside -ErrorAction Stop | Out-Null
     try { New-PrivateFile (Join-Path $junction 'must-not-exist.txt') 'synthetic-secret' | Out-Null; throw 'Reparse parent was accepted' } catch { if ($_.Exception.Message -eq 'Reparse parent was accepted') { throw } }
+    Remove-Item -LiteralPath $junction -Force
+    Remove-Item -LiteralPath $outside -Recurse -Force
+  }
+  Invoke-RequiredTest 'directory-parent-chain-reparse-rejection' {
+    $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-directory-outside-" + [guid]::NewGuid())
+    [IO.Directory]::CreateDirectory($outside) | Out-Null
+    $junction = Join-Path $root 'directory-reparse-parent'
+    New-Item -ItemType Junction -Path $junction -Target $outside -ErrorAction Stop | Out-Null
+    try { New-PrivateDirectory (Join-Path $junction 'must-not-exist') | Out-Null; throw 'Directory reparse parent was accepted' } catch { if ($_.Exception.Message -eq 'Directory reparse parent was accepted') { throw } }
     Remove-Item -LiteralPath $junction -Force
     Remove-Item -LiteralPath $outside -Recurse -Force
   }
@@ -257,6 +318,47 @@ try {
       $script:RaceEvidence = [pscustomobject]$raceState
     }
   }
+  Invoke-RequiredTest 'deterministic-directory-parent-swap-race-rejection' {
+    $raceRoot = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-directory-race-" + [guid]::NewGuid())
+    $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-directory-race-outside-" + [guid]::NewGuid())
+    $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape'
+    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; Result = $null; ResultingDirectoryHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; NativeErrorCode = $null }
+    try {
+      New-PrivateDirectory $raceRoot | Out-Null; New-PrivateDirectory $parent | Out-Null; [IO.Directory]::CreateDirectory($outside) | Out-Null
+      $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
+      $swapParent = $parent; $swapMoved = $moved; $swapOutside = $outside
+      $script:BeforePrivateDirectoryCreateHook = ({
+        param($resolution)
+        $raceState.RootHandle = $resolution.RootIdentity; $raceState.ParentHandle = $resolution.ParentIdentity; $raceState.BarrierReached = $true; $raceState.SwapPerformedBySid = Get-CurrentSid
+        try {
+          Move-Item -LiteralPath $swapParent -Destination $swapMoved -ErrorAction Stop
+          New-Item -ItemType Junction -Path $swapParent -Target $swapOutside -ErrorAction Stop | Out-Null
+          $raceState.HookReached = $true
+        } catch { $raceState.HookErrorType = $_.Exception.GetType().Name; throw }
+      }).GetNewClosure()
+      try {
+        $creation = New-PrivateDirectory $target
+        $raceState.Result = 'created-via-held-parent-handle'
+        $raceState.ResultingDirectoryHandle = $creation.Identity
+        Assert-PrivateAclEvidence $creation.Evidence (Get-CurrentSid) $true | Out-Null
+      } catch {
+        $raceState.Result = 'rejected:' + $_.Exception.GetType().Name
+        $raceState.NativeErrorCode = Get-Win32ErrorCode $_.Exception
+      }
+      if (-not $raceState.HookReached) { throw 'Directory race hook was not reached' }
+      if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Directory race test sentinel was modified' }
+      if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape')) { throw 'Parent swap redirected native directory creation outside validated path' }
+      if ($raceState.Result -eq 'created-via-held-parent-handle' -and -not (Test-Path -LiteralPath (Join-Path $moved 'must-not-escape'))) { throw 'Handle-bound directory create did not remain in the original parent object' }
+      $raceState.ExternalUnchanged = $true
+    } finally {
+      $script:BeforePrivateDirectoryCreateHook = $null
+      if (Test-Path -LiteralPath $parent) { Remove-Item -LiteralPath $parent -Force }
+      if (Test-Path -LiteralPath $raceRoot) { Remove-Item -LiteralPath $raceRoot -Recurse -Force }
+      if (Test-Path -LiteralPath $outside) { Remove-Item -LiteralPath $outside -Recurse -Force }
+      $raceState.Cleanup = -not (Test-Path -LiteralPath $raceRoot) -and -not (Test-Path -LiteralPath $outside)
+      $script:DirectoryRaceEvidence = [pscustomobject]$raceState
+    }
+  }
 } catch {
   $failure = $_
 } finally {
@@ -270,6 +372,7 @@ try {
     RunnerOS = $env:RUNNER_OS
     Results = @($results)
     RaceEvidence = $script:RaceEvidence
+    DirectoryRaceEvidence = $script:DirectoryRaceEvidence
   }
   $evidence | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $EvidencePath -Encoding utf8NoBOM
 }
