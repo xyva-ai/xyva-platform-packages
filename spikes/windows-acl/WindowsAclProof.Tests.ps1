@@ -15,6 +15,7 @@ $root = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-poc-" + [guid]::NewGuid(
 $accessRoot = $null
 $failure = $null
 $results = [System.Collections.Generic.List[object]]::new()
+$script:RaceEvidence = $null
 
 function Add-Result([string] $Name, [string] $Status, [string] $Detail) {
   $results.Add([pscustomobject]@{ Requirement = $Name; Status = $Status; Detail = $Detail })
@@ -99,7 +100,7 @@ if ($ChildProbe) {
 }
 if ([string]::IsNullOrEmpty($EvidencePath)) { throw 'EvidencePath is required for the parent test harness' }
 
-function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirectory, [string] $ProtectedFile, [string] $ProtectedRoot) {
+function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirectory, [string] $ProtectedFile, [string] $ProtectedRoot, [string] $RaceProbeParent) {
   $name = "xyva-acl-" + [guid]::NewGuid().ToString('N').Substring(0, 11)
   $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
   $user = $null
@@ -127,6 +128,8 @@ function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirec
       Add-Result 'unprivileged-private-file-write-denied' 'PASS' 'kernel denied write'
       Assert-KernelAccessDenied { [IO.File]::WriteAllText((Join-Path $ProtectedRoot 'unprivileged-create.txt'), 'x') } 'Private directory create unexpectedly succeeded'
       Add-Result 'unprivileged-private-directory-create-denied' 'PASS' 'kernel denied create'
+      Assert-KernelAccessDenied { Move-Item -LiteralPath $RaceProbeParent -Destination ($RaceProbeParent + '-moved') -ErrorAction Stop } 'Unprivileged identity unexpectedly renamed race parent'
+      Add-Result 'unprivileged-race-parent-swap-denied' 'PASS' 'kernel denied prerequisite parent rename'
     })
     if ((Get-CurrentSid) -ne $originalSid) { throw 'Original process identity was not restored' }
     Add-Result 'original-identity-restored' 'PASS' 'effective SID restored after impersonation'
@@ -152,6 +155,13 @@ try {
   Invoke-RequiredTest 'handle-bound-acl-before-and-after-write' { $script:creation = New-PrivateFile $file 'synthetic-secret' }
   Invoke-RequiredTest 'authorized-owner-read' { if ((Get-Content -LiteralPath $file -Raw) -ne 'synthetic-secret') { throw 'Authorized read failed' } }
   Invoke-RequiredTest 'complete-dacl-and-owner-model' { Assert-PrivateAclEvidence $creation.BeforeWrite (Get-CurrentSid) $false | Out-Null; Assert-PrivateAclEvidence $creation.AfterWrite (Get-CurrentSid) $false | Out-Null }
+  Invoke-RequiredTest 'existing-target-native-create-rejected' {
+    try { New-PrivateFile $file 'must-not-overwrite' | Out-Null } catch {
+      if ($_.Exception -is [ComponentModel.Win32Exception] -and $_.Exception.NativeErrorCode -eq 80) { return }
+      throw
+    }
+    throw 'Existing target was overwritten or accepted'
+  }
   Invoke-RequiredTest 'fail-closed-null-missing-empty-and-manipulated-acl' {
     $base = $creation.AfterWrite
     $variants = @(
@@ -173,26 +183,6 @@ try {
     Remove-Item -LiteralPath $junction -Force
     Remove-Item -LiteralPath $outside -Recurse -Force
   }
-  Invoke-RequiredTest 'deterministic-parent-swap-race-rejection' {
-    $raceRoot = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-" + [guid]::NewGuid())
-    $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-outside-" + [guid]::NewGuid())
-    $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape.txt'
-    try {
-      New-PrivateDirectory $raceRoot; New-PrivateDirectory $parent; [IO.Directory]::CreateDirectory($outside) | Out-Null
-      $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
-      $script:RaceHookReached = $false
-      $script:BeforePrivateCreateHook = { Move-Item -LiteralPath $parent -Destination $moved; New-Item -ItemType Junction -Path $parent -Target $outside -ErrorAction Stop | Out-Null; $script:RaceHookReached = $true }
-      try { New-PrivateFile $target 'synthetic-secret' | Out-Null } catch { }
-      if (-not $script:RaceHookReached) { throw 'Race hook was not reached' }
-      if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Race test sentinel was modified' }
-      if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape.txt')) { throw 'Parent swap redirected native file creation outside validated path' }
-    } finally {
-      $script:BeforePrivateCreateHook = $null
-      if (Test-Path -LiteralPath $parent) { Remove-Item -LiteralPath $parent -Force }
-      if (Test-Path -LiteralPath $raceRoot) { Remove-Item -LiteralPath $raceRoot -Recurse -Force }
-      if (Test-Path -LiteralPath $outside) { Remove-Item -LiteralPath $outside -Recurse -Force }
-    }
-  }
   foreach ($sid in @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545', 'S-1-5-32-546')) {
     Invoke-RequiredTest "unsafe-allow-rejected-$sid" { Assert-UnsafeAllowRejected $sid ("unsafe-" + $sid.Replace('-', '_') + '.txt') }
   }
@@ -203,15 +193,54 @@ try {
     $script:controlDirectory = Join-Path $accessRoot 'control-directory'
     $script:impersonationPrivateFile = Join-Path $accessRoot 'private.txt'
     $script:impersonationPrivateDirectory = Join-Path $accessRoot 'private-directory'
+    $script:raceProbeParent = Join-Path $accessRoot 'race-probe-parent'
     New-PrivateFile $controlFile 'control-readable' | Out-Null
     New-PrivateDirectory $controlDirectory
     New-PrivateFile $impersonationPrivateFile 'synthetic-secret' | Out-Null
     New-PrivateDirectory $impersonationPrivateDirectory
+    New-PrivateDirectory $raceProbeParent
     Set-ControlAreaAcl $controlFile $false
     Set-ControlAreaAcl $controlDirectory $true $true
     Set-ControlAreaAcl $accessRoot $true
   }
-  Invoke-RequiredTest 'unprivileged-effective-access-controls' { Test-UnprivilegedIdentity $controlFile $controlDirectory $impersonationPrivateFile $impersonationPrivateDirectory }
+  Invoke-RequiredTest 'unprivileged-effective-access-controls' { Test-UnprivilegedIdentity $controlFile $controlDirectory $impersonationPrivateFile $impersonationPrivateDirectory $raceProbeParent }
+  Invoke-RequiredTest 'deterministic-parent-swap-race-rejection' {
+    $raceRoot = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-" + [guid]::NewGuid())
+    $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-outside-" + [guid]::NewGuid())
+    $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape.txt'
+    try {
+      New-PrivateDirectory $raceRoot; New-PrivateDirectory $parent; [IO.Directory]::CreateDirectory($outside) | Out-Null
+      $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
+      $script:RaceHookReached = $false
+      $script:BeforePrivateCreateHook = {
+        param($resolution)
+        $script:RaceEvidence = [ordered]@{ RootHandle = $resolution.RootIdentity; ParentHandle = $resolution.ParentIdentity; BarrierReached = $true; SwapPerformedBySid = Get-CurrentSid; Result = $null; ExternalUnchanged = $false; Cleanup = $false }
+        Move-Item -LiteralPath $parent -Destination $moved -ErrorAction Stop
+        New-Item -ItemType Junction -Path $parent -Target $outside -ErrorAction Stop | Out-Null
+        $script:RaceHookReached = $true
+      }
+      try {
+        $raceCreation = New-PrivateFile $target 'synthetic-secret'
+        $script:RaceEvidence.Result = 'created-via-held-parent-handle'
+        $script:RaceEvidence.ResultingParentHandle = $raceCreation.ParentIdentity
+      } catch {
+        $errorCode = if ($_.Exception -is [ComponentModel.Win32Exception]) { $_.Exception.NativeErrorCode } else { $null }
+        $script:RaceEvidence.Result = 'rejected:' + $_.Exception.GetType().Name
+        $script:RaceEvidence.NativeErrorCode = $errorCode
+      }
+      if (-not $script:RaceHookReached) { throw 'Race hook was not reached' }
+      if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Race test sentinel was modified' }
+      if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape.txt')) { throw 'Parent swap redirected native file creation outside validated path' }
+      if ($script:RaceEvidence.Result -eq 'created-via-held-parent-handle' -and -not (Test-Path -LiteralPath (Join-Path $moved 'must-not-escape.txt'))) { throw 'Handle-bound create did not remain in the original parent object' }
+      $script:RaceEvidence.ExternalUnchanged = $true
+    } finally {
+      $script:BeforePrivateCreateHook = $null
+      if (Test-Path -LiteralPath $parent) { Remove-Item -LiteralPath $parent -Force }
+      if (Test-Path -LiteralPath $raceRoot) { Remove-Item -LiteralPath $raceRoot -Recurse -Force }
+      if (Test-Path -LiteralPath $outside) { Remove-Item -LiteralPath $outside -Recurse -Force }
+      if ($null -ne $script:RaceEvidence) { $script:RaceEvidence.Cleanup = -not (Test-Path -LiteralPath $raceRoot) -and -not (Test-Path -LiteralPath $outside) }
+    }
+  }
 } catch {
   $failure = $_
 } finally {
@@ -224,6 +253,7 @@ try {
     PowerShell = $PSVersionTable.PSVersion.ToString()
     RunnerOS = $env:RUNNER_OS
     Results = @($results)
+    RaceEvidence = $script:RaceEvidence
   }
   $evidence | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $EvidencePath -Encoding utf8NoBOM
 }
