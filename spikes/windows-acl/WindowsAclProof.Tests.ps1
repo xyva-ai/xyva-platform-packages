@@ -44,6 +44,39 @@ function Assert-EvidenceRejected($Evidence) {
   throw 'Malformed ACL evidence was accepted'
 }
 
+function Test-NativeMalformedDaclFixture([ValidateSet('null', 'empty')] [string] $Kind) {
+  $fixture = Join-Path $root ("native-" + $Kind + "-dacl-" + [guid]::NewGuid().ToString('N') + '.tmp')
+  $handle = [IntPtr]::Zero
+  $state = $null
+  $rejected = $false
+  try {
+    # This content is intentionally non-sensitive and the fixture never leaves the private temporary root.
+    [IO.File]::WriteAllText($fixture, 'fixture')
+    $handle = [XyvaAclNative]::OpenForDaclMutation($fixture, $false)
+    if ($Kind -eq 'null') { [XyvaAclNative]::SetNullDacl($handle) } else { [XyvaAclNative]::SetEmptyDacl($handle) }
+    $state = [XyvaAclNative]::HandleDaclState($handle)
+    if (-not $state.DaclPresent) { throw "Native $Kind DACL fixture did not retain DACL-present" }
+    if (($Kind -eq 'null' -and -not $state.DaclNull) -or ($Kind -eq 'empty' -and $state.DaclNull)) { throw "Native $Kind DACL fixture did not retain the requested DACL pointer state" }
+    if ($state.AceCount -ne 0) { throw "Native $Kind DACL fixture has unexpected ACE count: $($state.AceCount)" }
+    $evidence = Get-AclEvidenceFromHandle $handle
+    if ($evidence.DaclPresent -ne $state.DaclPresent -or $evidence.DaclNull -ne $state.DaclNull -or $evidence.Entries.Count -ne $state.AceCount) { throw 'Handle ACL evidence disagrees with native descriptor state' }
+    try { Assert-PrivateAclEvidence $evidence (Get-CurrentSid) $false | Out-Null } catch { $rejected = $true }
+    if (-not $rejected) { throw "XYVA validation accepted a native $Kind DACL" }
+  } finally {
+    if ($handle -ne [IntPtr]::Zero) {
+      try { [XyvaAclNative]::SetDaclFromSddl($handle, (New-PrivateSddl (Get-CurrentSid) $false)) }
+      finally { [void][XyvaAclNative]::CloseHandle($handle) }
+    }
+    if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Force -ErrorAction Stop }
+    if (Test-Path -LiteralPath $fixture) { throw "Native $Kind DACL fixture cleanup failed" }
+  }
+  Add-Result "native-$Kind-dacl-file" 'PASS' ("object=file; daclPresent={0}; daclNull={1}; aceCount={2}; control=0x{3:X4}; xyvaRejected={4}; cleanup=true" -f $state.DaclPresent, $state.DaclNull, $state.AceCount, $state.Control, $rejected)
+}
+
+function Invoke-NativeMalformedDaclFixture([ValidateSet('null', 'empty')] [string] $Kind) {
+  try { Test-NativeMalformedDaclFixture $Kind } catch { Add-Result "native-$Kind-dacl-file" 'FAIL' $_.Exception.Message; throw }
+}
+
 function Set-ControlAreaAcl([string] $Path, [bool] $Directory, [bool] $AllowUnprivilegedWrite = $false) {
   $owner = [Security.Principal.SecurityIdentifier]::new((Get-CurrentSid))
   $acl = if ($Directory) { [Security.AccessControl.DirectorySecurity]::new() } else { [Security.AccessControl.FileSecurity]::new() }
@@ -235,6 +268,9 @@ try {
     )
     foreach ($variant in $variants) { Assert-EvidenceRejected $variant }
   }
+  Invoke-NativeMalformedDaclFixture 'null'
+  Invoke-NativeMalformedDaclFixture 'empty'
+  Add-Result 'native-missing-dacl-file' 'NOT_EXECUTED' 'object=file; NTFS-associated object descriptors retain SE_DACL_PRESENT, so a missing-DACL state cannot be independently established on this fixture without simulating evidence'
   Invoke-RequiredTest 'parent-chain-reparse-rejection' {
     $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-outside-" + [guid]::NewGuid())
     [IO.Directory]::CreateDirectory($outside) | Out-Null

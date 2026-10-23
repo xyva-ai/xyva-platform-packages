@@ -39,7 +39,15 @@ public static class XyvaAclNative {
   [DllImport("advapi32.dll", SetLastError = true)]
   static extern uint GetSecurityInfo(IntPtr handle, uint objectType, uint securityInfo,
     out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
+  [DllImport("advapi32.dll", SetLastError = true)]
+  static extern uint SetSecurityInfo(IntPtr handle, uint objectType, uint securityInfo,
+    IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
   [DllImport("advapi32.dll", SetLastError = true)] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
+  [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetSecurityDescriptorControl(IntPtr descriptor, out ushort control, out uint revision);
+  [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetSecurityDescriptorDacl(IntPtr descriptor, out bool present, out IntPtr dacl, out bool defaulted);
+  [StructLayout(LayoutKind.Sequential)] struct ACL_SIZE_INFORMATION { public uint AceCount, AclBytesInUse, AclBytesFree; }
+  [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetAclInformation(IntPtr acl, out ACL_SIZE_INFORMATION information, uint informationLength, uint informationClass);
+  [DllImport("advapi32.dll", SetLastError = true)] static extern bool InitializeAcl(IntPtr acl, uint length, uint revision);
   [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
   static extern bool LogonUser(string username, string domain, string password, int logonType, int provider, out SafeAccessTokenHandle token);
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct STARTUPINFO { public int cb; public string lpReserved, lpDesktop, lpTitle; public int dwX,dwY,dwXSize,dwYSize,dwXCountChars,dwYCountChars,dwFillAttribute; public int dwFlags; public short wShowWindow,wReserved2; public IntPtr lpReserved2,hStdInput,hStdOutput,hStdError; }
@@ -54,6 +62,13 @@ public static class XyvaAclNative {
   [DllImport("ntdll.dll")] static extern int NtCreateFile(out IntPtr fileHandle, uint desiredAccess, ref OBJECT_ATTRIBUTES objectAttributes, out IO_STATUS_BLOCK ioStatusBlock, IntPtr allocationSize, uint fileAttributes, uint shareAccess, uint createDisposition, uint createOptions, IntPtr eaBuffer, uint eaLength);
   [DllImport("ntdll.dll")] static extern uint RtlNtStatusToDosError(int status);
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandle(IntPtr handle, out BY_HANDLE_FILE_INFORMATION information);
+
+  public sealed class DaclState {
+    public bool DaclPresent { get; set; }
+    public bool DaclNull { get; set; }
+    public uint AceCount { get; set; }
+    public ushort Control { get; set; }
+  }
 
   public static SECURITY_ATTRIBUTES SecurityAttributes(string sddl) {
     IntPtr descriptor; uint size;
@@ -76,6 +91,13 @@ public static class XyvaAclNative {
     if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
     return handle;
   }
+  public static IntPtr OpenForDaclMutation(string path, bool directory) {
+    SECURITY_ATTRIBUTES unused = new SECURITY_ATTRIBUTES();
+    uint flags = directory ? 0x02000000U : 0x80U;
+    IntPtr handle = CreateFile(path, 0x00060000, 0x00000003, ref unused, 3, flags, IntPtr.Zero);
+    if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    return handle;
+  }
   public static byte[] HandleSecurityDescriptor(IntPtr handle) {
     IntPtr owner, group, dacl, sacl, descriptor;
     uint result = GetSecurityInfo(handle, 1, 0x00000001 | 0x00000004,
@@ -87,6 +109,49 @@ public static class XyvaAclNative {
       byte[] bytes = new byte[length];
       Marshal.Copy(descriptor, bytes, 0, (int)length);
       return bytes;
+    } finally { LocalFree(descriptor); }
+  }
+  public static DaclState HandleDaclState(IntPtr handle) {
+    IntPtr owner, group, dacl, sacl, descriptor;
+    uint result = GetSecurityInfo(handle, 1, 0x00000001 | 0x00000004,
+      out owner, out group, out dacl, out sacl, out descriptor);
+    if (result != 0) throw new Win32Exception((int)result);
+    try {
+      ushort control; uint revision;
+      if (!GetSecurityDescriptorControl(descriptor, out control, out revision)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      bool present, defaulted; IntPtr descriptorDacl;
+      if (!GetSecurityDescriptorDacl(descriptor, out present, out descriptorDacl, out defaulted)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      bool controlPresent = (control & 0x0004) != 0;
+      if (present != controlPresent) throw new InvalidOperationException("DACL presence flag disagrees with descriptor DACL state");
+      DaclState state = new DaclState { DaclPresent = controlPresent, DaclNull = controlPresent && descriptorDacl == IntPtr.Zero, AceCount = 0, Control = control };
+      if (present && descriptorDacl != IntPtr.Zero) {
+        ACL_SIZE_INFORMATION aclInformation;
+        if (!GetAclInformation(descriptorDacl, out aclInformation, (uint)Marshal.SizeOf(typeof(ACL_SIZE_INFORMATION)), 2)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        state.AceCount = aclInformation.AceCount;
+      }
+      return state;
+    } finally { LocalFree(descriptor); }
+  }
+  public static void SetNullDacl(IntPtr handle) {
+    uint result = SetSecurityInfo(handle, 1, 0x00000004, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+    if (result != 0) throw new Win32Exception((int)result);
+  }
+  public static void SetEmptyDacl(IntPtr handle) {
+    IntPtr acl = Marshal.AllocHGlobal(8);
+    try {
+      if (!InitializeAcl(acl, 8, 2)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      uint result = SetSecurityInfo(handle, 1, 0x00000004, IntPtr.Zero, IntPtr.Zero, acl, IntPtr.Zero);
+      if (result != 0) throw new Win32Exception((int)result);
+    } finally { Marshal.FreeHGlobal(acl); }
+  }
+  public static void SetDaclFromSddl(IntPtr handle, string sddl) {
+    IntPtr descriptor; uint size;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out descriptor, out size)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    try {
+      bool present, defaulted; IntPtr dacl;
+      if (!GetSecurityDescriptorDacl(descriptor, out present, out dacl, out defaulted) || !present || dacl == IntPtr.Zero) throw new InvalidOperationException("Expected concrete DACL in restoration descriptor");
+      uint result = SetSecurityInfo(handle, 1, 0x80000004, IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero);
+      if (result != 0) throw new Win32Exception((int)result);
     } finally { LocalFree(descriptor); }
   }
   public static SafeAccessTokenHandle LogonInteractive(string username, string domain, string password) {
