@@ -1,0 +1,32 @@
+name: Windows ACL security proof of concept
+on:
+  pull_request:
+    branches: [main]
+    types: [labeled]
+permissions:
+  contents: read
+jobs:
+  acl-poc:
+    if: github.event.label.name == 'ci:windows-acl' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == 'main'
+    runs-on: windows-2025
+    steps:
+      - if: runner.environment != 'github-hosted'
+        shell: pwsh
+        run: exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - shell: pwsh
+        run: |
+          if ((git rev-parse HEAD) -ne '${{ github.event.pull_request.head.sha }}') { throw 'Head SHA mismatch' }
+          New-Item -ItemType Directory -Path evidence -Force | Out-Null
+          pwsh -NoProfile -NonInteractive -File spikes/windows-acl/WindowsAclProof.Tests.ps1 -EvidencePath evidence/windows-acl-evidence.json
+          Get-Content -LiteralPath evidence/windows-acl-evidence.json -Raw
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: windows-acl-evidence-${{ github.run_id }}
+          path: evidence/windows-acl-evidence.json
+          if-no-files-found: error
+          retention-days: 14
