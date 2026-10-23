@@ -25,12 +25,16 @@ jobs:
         shell: pwsh
         run: |
           if ((git rev-parse HEAD) -ne '${{ github.event.pull_request.head.sha }}') { throw 'Head SHA mismatch' }
-          node --version; npm --version; cl.exe 2>$null | Select-Object -First 1
+          New-Item -ItemType Directory evidence -Force | Out-Null
+          @{ sha=(git rev-parse HEAD); node=(node --version); npm=(npm --version); architecture=$env:PROCESSOR_ARCHITECTURE; runner=$env:ImageOS; imageVersion=$env:ImageVersion } | ConvertTo-Json | Set-Content evidence/windows-native-store.json -Encoding utf8NoBOM
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual C++ build tools unavailable' }
+          cmd /c "call `"$vs\Common7\Tools\VsDevCmd.bat`" -arch=x64 -host_arch=x64 && set" | ForEach-Object { if ($_ -match '^(.*?)=(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] } }
+          cl.exe /? | Select-Object -First 1
           npm --prefix spikes/windows-native-secure-store ci --ignore-scripts --no-audit --no-fund
           npm --prefix spikes/windows-native-secure-store run build
           npm --prefix spikes/windows-native-secure-store test
-          New-Item -ItemType Directory evidence -Force | Out-Null
-          @{ sha=(git rev-parse HEAD); node=(node --version); npm=(npm --version); architecture=$env:PROCESSOR_ARCHITECTURE; runner=$env:ImageOS; imageVersion=$env:ImageVersion } | ConvertTo-Json | Set-Content evidence/windows-native-store.json -Encoding utf8NoBOM
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.18.0
