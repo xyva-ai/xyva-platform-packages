@@ -58,6 +58,7 @@ function Test-NativeMalformedDaclFixture([ValidateSet('null', 'empty')] [string]
     if (-not $state.DaclPresent) { throw "Native $Kind DACL fixture did not retain DACL-present" }
     if (($Kind -eq 'null' -and -not $state.DaclNull) -or ($Kind -eq 'empty' -and $state.DaclNull)) { throw "Native $Kind DACL fixture did not retain the requested DACL pointer state" }
     if ($state.AceCount -ne 0) { throw "Native $Kind DACL fixture has unexpected ACE count: $($state.AceCount)" }
+    if (($state.Control -band 0x1000) -eq 0) { throw "Native $Kind DACL fixture is not protected from inheritance" }
     $evidence = Get-AclEvidenceFromHandle $handle
     if ($evidence.DaclPresent -ne $state.DaclPresent -or $evidence.DaclNull -ne $state.DaclNull -or $evidence.Entries.Count -ne $state.AceCount) { throw 'Handle ACL evidence disagrees with native descriptor state' }
     try { Assert-PrivateAclEvidence $evidence (Get-CurrentSid) $false | Out-Null } catch { $rejected = $true }

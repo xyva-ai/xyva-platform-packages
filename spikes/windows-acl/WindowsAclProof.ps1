@@ -140,7 +140,7 @@ public static class XyvaAclNative {
     IntPtr acl = Marshal.AllocHGlobal(8);
     try {
       if (!InitializeAcl(acl, 8, 2)) throw new Win32Exception(Marshal.GetLastWin32Error());
-      uint result = SetSecurityInfo(handle, 1, 0x00000004, IntPtr.Zero, IntPtr.Zero, acl, IntPtr.Zero);
+      uint result = SetSecurityInfo(handle, 1, 0x80000004, IntPtr.Zero, IntPtr.Zero, acl, IntPtr.Zero);
       if (result != 0) throw new Win32Exception((int)result);
     } finally { Marshal.FreeHGlobal(acl); }
   }
