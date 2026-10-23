@@ -221,19 +221,18 @@ function New-PrivateSecurityAttributes([string] $Sddl) {
 
 function Get-AclEvidenceFromHandle([IntPtr] $Handle) {
   $raw = [Security.AccessControl.RawSecurityDescriptor]::new([XyvaAclNative]::HandleSecurityDescriptor($Handle), 0)
-  $entries = if ($null -eq $raw.DiscretionaryAcl) {
-    @()
-  } else {
-    @($raw.DiscretionaryAcl | ForEach-Object {
-      [pscustomobject]@{
-        AceKind = $_.GetType().FullName
-        Type = if ($_ -is [Security.AccessControl.CommonAce]) { $_.AceQualifier.ToString() } else { 'Unknown' }
-        Sid = if ($_ -is [Security.AccessControl.KnownAce]) { $_.SecurityIdentifier.Value } else { $null }
-        Rights = if ($_ -is [Security.AccessControl.KnownAce]) { $_.AccessMask } else { $null }
-        Inherited = [bool]($_.AceFlags -band [Security.AccessControl.AceFlags]::Inherited)
-        Flags = [int]$_.AceFlags
-      }
-    })
+  $entries = [System.Collections.Generic.List[object]]::new()
+  if ($null -ne $raw.DiscretionaryAcl) {
+    foreach ($ace in $raw.DiscretionaryAcl) {
+      $entries.Add([pscustomobject]@{
+          AceKind = $ace.GetType().FullName
+          Type = if ($ace -is [Security.AccessControl.CommonAce]) { $ace.AceQualifier.ToString() } else { 'Unknown' }
+          Sid = if ($ace -is [Security.AccessControl.KnownAce]) { $ace.SecurityIdentifier.Value } else { $null }
+          Rights = if ($ace -is [Security.AccessControl.KnownAce]) { $ace.AccessMask } else { $null }
+          Inherited = [bool]($ace.AceFlags -band [Security.AccessControl.AceFlags]::Inherited)
+          Flags = [int]$ace.AceFlags
+        }) | Out-Null
+    }
   }
   [pscustomobject]@{
     Owner = if ($null -eq $raw.Owner) { $null } else { $raw.Owner.Value }
