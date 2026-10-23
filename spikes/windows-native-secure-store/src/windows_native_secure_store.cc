@@ -1,5 +1,6 @@
 #include <node_api.h>
 #include <windows.h>
+#include <aclapi.h>
 #include <sddl.h>
 #include <string>
 #include <vector>
