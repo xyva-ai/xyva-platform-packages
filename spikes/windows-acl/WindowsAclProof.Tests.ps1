@@ -221,13 +221,19 @@ try {
       New-PrivateDirectory $raceRoot; New-PrivateDirectory $parent; [IO.Directory]::CreateDirectory($outside) | Out-Null
       $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
       $script:RaceHookReached = $false
-      $script:BeforePrivateCreateHook = {
+      $swapParent = $parent; $swapMoved = $moved; $swapOutside = $outside
+      $script:BeforePrivateCreateHook = ({
         param($resolution)
-        $script:RaceEvidence = [ordered]@{ RootHandle = $resolution.RootIdentity; ParentHandle = $resolution.ParentIdentity; BarrierReached = $true; SwapPerformedBySid = Get-CurrentSid; Result = $null; ExternalUnchanged = $false; Cleanup = $false }
-        Move-Item -LiteralPath $parent -Destination $moved -ErrorAction Stop
-        New-Item -ItemType Junction -Path $parent -Target $outside -ErrorAction Stop | Out-Null
-        $script:RaceHookReached = $true
-      }
+        $script:RaceEvidence = [ordered]@{ RootHandle = $resolution.RootIdentity; ParentHandle = $resolution.ParentIdentity; BarrierReached = $true; SwapPerformedBySid = Get-CurrentSid; Result = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null }
+        try {
+          Move-Item -LiteralPath $swapParent -Destination $swapMoved -ErrorAction Stop
+          New-Item -ItemType Junction -Path $swapParent -Target $swapOutside -ErrorAction Stop | Out-Null
+          $script:RaceHookReached = $true
+        } catch {
+          $script:RaceEvidence.HookErrorType = $_.Exception.GetType().Name
+          throw
+        }
+      }).GetNewClosure()
       try {
         $raceCreation = New-PrivateFile $target 'synthetic-secret'
         $script:RaceEvidence.Result = 'created-via-held-parent-handle'
