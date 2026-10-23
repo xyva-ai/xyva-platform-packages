@@ -217,43 +217,44 @@ try {
     $raceRoot = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-" + [guid]::NewGuid())
     $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-outside-" + [guid]::NewGuid())
     $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape.txt'
+    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; Result = $null; ResultingParentHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; NativeErrorCode = $null }
     try {
       New-PrivateDirectory $raceRoot; New-PrivateDirectory $parent; [IO.Directory]::CreateDirectory($outside) | Out-Null
       $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
-      $script:RaceHookReached = $false
       $swapParent = $parent; $swapMoved = $moved; $swapOutside = $outside
       $script:BeforePrivateCreateHook = ({
         param($resolution)
-        $script:RaceEvidence = [ordered]@{ RootHandle = $resolution.RootIdentity; ParentHandle = $resolution.ParentIdentity; BarrierReached = $true; SwapPerformedBySid = Get-CurrentSid; Result = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null }
+        $raceState.RootHandle = $resolution.RootIdentity; $raceState.ParentHandle = $resolution.ParentIdentity; $raceState.BarrierReached = $true; $raceState.SwapPerformedBySid = Get-CurrentSid
         try {
           Move-Item -LiteralPath $swapParent -Destination $swapMoved -ErrorAction Stop
           New-Item -ItemType Junction -Path $swapParent -Target $swapOutside -ErrorAction Stop | Out-Null
-          $script:RaceHookReached = $true
+          $raceState.HookReached = $true
         } catch {
-          $script:RaceEvidence.HookErrorType = $_.Exception.GetType().Name
+          $raceState.HookErrorType = $_.Exception.GetType().Name
           throw
         }
       }).GetNewClosure()
       try {
         $raceCreation = New-PrivateFile $target 'synthetic-secret'
-        $script:RaceEvidence.Result = 'created-via-held-parent-handle'
-        $script:RaceEvidence.ResultingParentHandle = $raceCreation.ParentIdentity
+        $raceState.Result = 'created-via-held-parent-handle'
+        $raceState.ResultingParentHandle = $raceCreation.ParentIdentity
       } catch {
         $errorCode = Get-Win32ErrorCode $_.Exception
-        $script:RaceEvidence.Result = 'rejected:' + $_.Exception.GetType().Name
-        $script:RaceEvidence.NativeErrorCode = $errorCode
+        $raceState.Result = 'rejected:' + $_.Exception.GetType().Name
+        $raceState.NativeErrorCode = $errorCode
       }
-      if (-not $script:RaceHookReached) { throw 'Race hook was not reached' }
+      if (-not $raceState.HookReached) { throw 'Race hook was not reached' }
       if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Race test sentinel was modified' }
       if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape.txt')) { throw 'Parent swap redirected native file creation outside validated path' }
-      if ($script:RaceEvidence.Result -eq 'created-via-held-parent-handle' -and -not (Test-Path -LiteralPath (Join-Path $moved 'must-not-escape.txt'))) { throw 'Handle-bound create did not remain in the original parent object' }
-      $script:RaceEvidence.ExternalUnchanged = $true
+      if ($raceState.Result -eq 'created-via-held-parent-handle' -and -not (Test-Path -LiteralPath (Join-Path $moved 'must-not-escape.txt'))) { throw 'Handle-bound create did not remain in the original parent object' }
+      $raceState.ExternalUnchanged = $true
     } finally {
       $script:BeforePrivateCreateHook = $null
       if (Test-Path -LiteralPath $parent) { Remove-Item -LiteralPath $parent -Force }
       if (Test-Path -LiteralPath $raceRoot) { Remove-Item -LiteralPath $raceRoot -Recurse -Force }
       if (Test-Path -LiteralPath $outside) { Remove-Item -LiteralPath $outside -Recurse -Force }
-      if ($null -ne $script:RaceEvidence) { $script:RaceEvidence.Cleanup = -not (Test-Path -LiteralPath $raceRoot) -and -not (Test-Path -LiteralPath $outside) }
+      $raceState.Cleanup = -not (Test-Path -LiteralPath $raceRoot) -and -not (Test-Path -LiteralPath $outside)
+      $script:RaceEvidence = [pscustomobject]$raceState
     }
   }
 } catch {
