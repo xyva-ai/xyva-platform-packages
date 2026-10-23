@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 
 $TrustedSystemSids = @('S-1-5-18', 'S-1-5-32-544') # LocalSystem and BUILTIN\Administrators: trusted OS recovery identities.
 $BroadSids = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545') # Everyone, Authenticated Users, BUILTIN\Users.
+$script:BeforePrivateCreateHook = $null # Test-only deterministic race barrier; unset in production-shaped paths.
 
 function Get-CurrentSid { [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
 
@@ -166,6 +167,7 @@ function New-PrivateFile([string] $Path, [string] $Content) {
   $parent = [IO.Path]::GetDirectoryName($Path)
   if ([IO.Path]::GetFullPath($Path) -ne $Path -or (Test-Path -LiteralPath $Path) -or -not (Test-Path -LiteralPath $parent)) { throw 'Unsafe target path' }
   Assert-SafeParentChain $Path
+  if ($null -ne $script:BeforePrivateCreateHook) { & $script:BeforePrivateCreateHook }
   $attributes = [XyvaAclNative]::SecurityAttributes((New-PrivateSddl $owner $false))
   $handle = [IntPtr]::Zero
   $stream = $null

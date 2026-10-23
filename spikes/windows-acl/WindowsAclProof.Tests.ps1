@@ -83,17 +83,19 @@ function Quote-ChildArgument([string] $Value) {
 
 if ($ChildProbe) {
   $phase = 'process-started'
+  $phases = [System.Collections.Generic.List[string]]::new()
+  $phases.Add($phase)
   try {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     if ($PID -eq $ParentPid -or $identity.User.Value -ne $ExpectedSid -or [Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Child process identity verification failed' }
-    $phase = 'identity-verified'; if (([IO.File]::ReadAllText($ControlFile)) -ne 'control-readable') { throw 'Child positive read failed' }
-    $phase = 'positive-read';
+    $phase = 'identity-verified'; $phases.Add($phase); if (([IO.File]::ReadAllText($ControlFile)) -ne 'control-readable') { throw 'Child positive read failed' }
+    $phase = 'positive-read'; $phases.Add($phase)
     $probe = Join-Path $ControlDirectory 'child-process-write.txt'; [IO.File]::WriteAllText($probe, 'child-write'); [IO.File]::Delete($probe)
-    $phase = 'positive-write'; Assert-KernelAccessDenied { [IO.File]::ReadAllText($ProtectedFile) | Out-Null } 'Child private read unexpectedly succeeded'
+    $phase = 'positive-write'; $phases.Add($phase); Assert-KernelAccessDenied { [IO.File]::ReadAllText($ProtectedFile) | Out-Null } 'Child private read unexpectedly succeeded'
     Assert-KernelAccessDenied { [IO.File]::AppendAllText($ProtectedFile, 'x') } 'Child private write unexpectedly succeeded'
     Assert-KernelAccessDenied { [IO.File]::WriteAllText((Join-Path $ProtectedDirectory 'child-process-create.txt'), 'x') } 'Child private directory create unexpectedly succeeded'
-    $phase = 'private-access-denied'; [pscustomobject]@{ Phase = $phase; Pid = $PID; ParentPid = $ParentPid; Sid = $identity.User.Value; ExitCode = 0 } | ConvertTo-Json | Set-Content -LiteralPath $ChildEvidencePath -Encoding utf8NoBOM; exit 0
-  } catch { [pscustomobject]@{ Phase = $phase; Pid = $PID; ParentPid = $ParentPid; ErrorType = $_.Exception.GetType().Name; ExitCode = 71 } | ConvertTo-Json | Set-Content -LiteralPath $ChildEvidencePath -Encoding utf8NoBOM; exit 71 }
+    $phase = 'private-access-denied'; $phases.Add($phase); $phase = 'controlled-exit'; $phases.Add($phase); [pscustomobject]@{ Phase = $phase; Phases = @($phases); Pid = $PID; ParentPid = $ParentPid; Sid = $identity.User.Value; ExitCode = 0 } | ConvertTo-Json | Set-Content -LiteralPath $ChildEvidencePath -Encoding utf8NoBOM; exit 0
+  } catch { [pscustomobject]@{ Phase = $phase; Phases = @($phases); Pid = $PID; ParentPid = $ParentPid; ErrorType = $_.Exception.GetType().Name; ExitCode = 71 } | ConvertTo-Json | Set-Content -LiteralPath $ChildEvidencePath -Encoding utf8NoBOM; exit 71 }
 }
 if ([string]::IsNullOrEmpty($EvidencePath)) { throw 'EvidencePath is required for the parent test harness' }
 
@@ -134,7 +136,9 @@ function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirec
     $arguments = "$(Quote-ChildArgument $pwsh) -NoProfile -NonInteractive -File $(Quote-ChildArgument $scriptPath) -ChildProbe -ExpectedSid $(Quote-ChildArgument $user.SID.Value) -ControlFile $(Quote-ChildArgument $ControlFile) -ControlDirectory $(Quote-ChildArgument $ControlDirectory) -ProtectedFile $(Quote-ChildArgument $ProtectedFile) -ProtectedDirectory $(Quote-ChildArgument $ProtectedRoot) -ChildEvidencePath $(Quote-ChildArgument $childEvidence) -ParentPid $PID"
     $exitCode = [XyvaAclNative]::RunProcessWithLogon($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot)
     if ($exitCode -ne 0 -or -not (Test-Path -LiteralPath $childEvidence)) { throw "Second-process ACL probe failed: exit=$exitCode evidence=$([bool](Test-Path -LiteralPath $childEvidence))" }
-    Add-Result 'unprivileged-separate-process-access-controls' 'PASS' 'CreateProcessWithLogonW child passed kernel access checks'
+    $child = Get-Content -LiteralPath $childEvidence -Raw | ConvertFrom-Json
+    if ($child.ExitCode -ne 0 -or $child.Pid -eq $PID -or $child.ParentPid -ne $PID -or $child.Sid -ne $user.SID.Value -or @($child.Phases) -notcontains 'controlled-exit') { throw 'Second-process evidence validation failed' }
+    Add-Result 'unprivileged-separate-process-access-controls' 'PASS' "child pid=$($child.Pid); parent pid=$($child.ParentPid); sid=$($child.Sid); phases=$(@($child.Phases) -join ',')"
   } finally {
     if ($null -ne $token) { $token.Dispose() }
     if ($null -ne $user) { Remove-LocalUser -Name $name -ErrorAction SilentlyContinue }
@@ -168,6 +172,26 @@ try {
     try { New-PrivateFile (Join-Path $junction 'must-not-exist.txt') 'synthetic-secret' | Out-Null; throw 'Reparse parent was accepted' } catch { if ($_.Exception.Message -eq 'Reparse parent was accepted') { throw } }
     Remove-Item -LiteralPath $junction -Force
     Remove-Item -LiteralPath $outside -Recurse -Force
+  }
+  Invoke-RequiredTest 'deterministic-parent-swap-race-rejection' {
+    $raceRoot = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-" + [guid]::NewGuid())
+    $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-outside-" + [guid]::NewGuid())
+    $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape.txt'
+    try {
+      New-PrivateDirectory $raceRoot; New-PrivateDirectory $parent; [IO.Directory]::CreateDirectory($outside) | Out-Null
+      $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
+      $script:RaceHookReached = $false
+      $script:BeforePrivateCreateHook = { Move-Item -LiteralPath $parent -Destination $moved; New-Item -ItemType Junction -Path $parent -Target $outside -ErrorAction Stop | Out-Null; $script:RaceHookReached = $true }
+      try { New-PrivateFile $target 'synthetic-secret' | Out-Null } catch { }
+      if (-not $script:RaceHookReached) { throw 'Race hook was not reached' }
+      if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Race test sentinel was modified' }
+      if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape.txt')) { throw 'Parent swap redirected native file creation outside validated path' }
+    } finally {
+      $script:BeforePrivateCreateHook = $null
+      if (Test-Path -LiteralPath $parent) { Remove-Item -LiteralPath $parent -Force }
+      if (Test-Path -LiteralPath $raceRoot) { Remove-Item -LiteralPath $raceRoot -Recurse -Force }
+      if (Test-Path -LiteralPath $outside) { Remove-Item -LiteralPath $outside -Recurse -Force }
+    }
   }
   foreach ($sid in @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545', 'S-1-5-32-546')) {
     Invoke-RequiredTest "unsafe-allow-rejected-$sid" { Assert-UnsafeAllowRejected $sid ("unsafe-" + $sid.Replace('-', '_') + '.txt') }
