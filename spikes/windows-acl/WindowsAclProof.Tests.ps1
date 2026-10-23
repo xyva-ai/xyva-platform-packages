@@ -166,7 +166,7 @@ try {
   Invoke-RequiredTest 'complete-dacl-and-owner-model' { Assert-PrivateAclEvidence $creation.BeforeWrite (Get-CurrentSid) $false | Out-Null; Assert-PrivateAclEvidence $creation.AfterWrite (Get-CurrentSid) $false | Out-Null }
   Invoke-RequiredTest 'existing-target-native-create-rejected' {
     try { New-PrivateFile $file 'must-not-overwrite' | Out-Null } catch {
-      if ((Get-Win32ErrorCode $_.Exception) -eq 80) { return }
+      if (@(80, 183) -contains (Get-Win32ErrorCode $_.Exception)) { return }
       throw
     }
     throw 'Existing target was overwritten or accepted'
