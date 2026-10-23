@@ -5,7 +5,9 @@ param(
   [string] $ControlFile,
   [string] $ControlDirectory,
   [string] $ProtectedFile,
-  [string] $ProtectedDirectory
+  [string] $ProtectedDirectory,
+  [string] $ChildEvidencePath,
+  [int] $ParentPid
 )
 
 . "$PSScriptRoot/WindowsAclProof.ps1"
@@ -80,16 +82,18 @@ function Quote-ChildArgument([string] $Value) {
 }
 
 if ($ChildProbe) {
+  $phase = 'process-started'
   try {
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent($true)
-    if ($identity.User.Value -ne $ExpectedSid -or [Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Child token verification failed' }
-    if (([IO.File]::ReadAllText($ControlFile)) -ne 'control-readable') { throw 'Child positive read failed' }
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    if ($PID -eq $ParentPid -or $identity.User.Value -ne $ExpectedSid -or [Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Child process identity verification failed' }
+    $phase = 'identity-verified'; if (([IO.File]::ReadAllText($ControlFile)) -ne 'control-readable') { throw 'Child positive read failed' }
+    $phase = 'positive-read';
     $probe = Join-Path $ControlDirectory 'child-process-write.txt'; [IO.File]::WriteAllText($probe, 'child-write'); [IO.File]::Delete($probe)
-    Assert-KernelAccessDenied { [IO.File]::ReadAllText($ProtectedFile) | Out-Null } 'Child private read unexpectedly succeeded'
+    $phase = 'positive-write'; Assert-KernelAccessDenied { [IO.File]::ReadAllText($ProtectedFile) | Out-Null } 'Child private read unexpectedly succeeded'
     Assert-KernelAccessDenied { [IO.File]::AppendAllText($ProtectedFile, 'x') } 'Child private write unexpectedly succeeded'
     Assert-KernelAccessDenied { [IO.File]::WriteAllText((Join-Path $ProtectedDirectory 'child-process-create.txt'), 'x') } 'Child private directory create unexpectedly succeeded'
-    exit 0
-  } catch { Write-Error 'Second-process ACL probe failed'; exit 71 }
+    $phase = 'private-access-denied'; [pscustomobject]@{ Phase = $phase; Pid = $PID; ParentPid = $ParentPid; Sid = $identity.User.Value; ExitCode = 0 } | ConvertTo-Json | Set-Content -LiteralPath $ChildEvidencePath -Encoding utf8NoBOM; exit 0
+  } catch { [pscustomobject]@{ Phase = $phase; Pid = $PID; ParentPid = $ParentPid; ErrorType = $_.Exception.GetType().Name; ExitCode = 71 } | ConvertTo-Json | Set-Content -LiteralPath $ChildEvidencePath -Encoding utf8NoBOM; exit 71 }
 }
 if ([string]::IsNullOrEmpty($EvidencePath)) { throw 'EvidencePath is required for the parent test harness' }
 
@@ -125,9 +129,11 @@ function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirec
     if ((Get-CurrentSid) -ne $originalSid) { throw 'Original process identity was not restored' }
     Add-Result 'original-identity-restored' 'PASS' 'effective SID restored after impersonation'
     $scriptPath = $PSCommandPath
-    $arguments = "-NoProfile -NonInteractive -File $(Quote-ChildArgument $scriptPath) -ChildProbe -ExpectedSid $(Quote-ChildArgument $user.SID.Value) -ControlFile $(Quote-ChildArgument $ControlFile) -ControlDirectory $(Quote-ChildArgument $ControlDirectory) -ProtectedFile $(Quote-ChildArgument $ProtectedFile) -ProtectedDirectory $(Quote-ChildArgument $ProtectedRoot)"
-    $exitCode = [XyvaAclNative]::RunProcessWithLogon($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, (Join-Path $PSHOME 'pwsh.exe'), $arguments, $env:SystemRoot)
-    if ($exitCode -ne 0) { throw "Second-process ACL probe returned $exitCode" }
+    $childEvidence = Join-Path $ControlDirectory 'child-evidence.json'
+    $pwsh = Join-Path $PSHOME 'pwsh.exe'
+    $arguments = "$(Quote-ChildArgument $pwsh) -NoProfile -NonInteractive -File $(Quote-ChildArgument $scriptPath) -ChildProbe -ExpectedSid $(Quote-ChildArgument $user.SID.Value) -ControlFile $(Quote-ChildArgument $ControlFile) -ControlDirectory $(Quote-ChildArgument $ControlDirectory) -ProtectedFile $(Quote-ChildArgument $ProtectedFile) -ProtectedDirectory $(Quote-ChildArgument $ProtectedRoot) -ChildEvidencePath $(Quote-ChildArgument $childEvidence) -ParentPid $PID"
+    $exitCode = [XyvaAclNative]::RunProcessWithLogon($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot)
+    if ($exitCode -ne 0 -or -not (Test-Path -LiteralPath $childEvidence)) { throw "Second-process ACL probe failed: exit=$exitCode evidence=$([bool](Test-Path -LiteralPath $childEvidence))" }
     Add-Result 'unprivileged-separate-process-access-controls' 'PASS' 'CreateProcessWithLogonW child passed kernel access checks'
   } finally {
     if ($null -ne $token) { $token.Dispose() }
