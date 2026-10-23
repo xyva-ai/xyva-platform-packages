@@ -66,6 +66,15 @@ function Test-AccessDeniedException([Exception] $Exception) {
   return $false
 }
 
+function Get-Win32ErrorCode([Exception] $Exception) {
+  $current = $Exception
+  while ($null -ne $current) {
+    if ($current -is [ComponentModel.Win32Exception]) { return $current.NativeErrorCode }
+    $current = $current.InnerException
+  }
+  return $null
+}
+
 function Assert-KernelAccessDenied([scriptblock] $Operation, [string] $UnexpectedSuccess) {
   try {
     & $Operation
@@ -157,7 +166,7 @@ try {
   Invoke-RequiredTest 'complete-dacl-and-owner-model' { Assert-PrivateAclEvidence $creation.BeforeWrite (Get-CurrentSid) $false | Out-Null; Assert-PrivateAclEvidence $creation.AfterWrite (Get-CurrentSid) $false | Out-Null }
   Invoke-RequiredTest 'existing-target-native-create-rejected' {
     try { New-PrivateFile $file 'must-not-overwrite' | Out-Null } catch {
-      if ($_.Exception -is [ComponentModel.Win32Exception] -and $_.Exception.NativeErrorCode -eq 80) { return }
+      if ((Get-Win32ErrorCode $_.Exception) -eq 80) { return }
       throw
     }
     throw 'Existing target was overwritten or accepted'
@@ -224,7 +233,7 @@ try {
         $script:RaceEvidence.Result = 'created-via-held-parent-handle'
         $script:RaceEvidence.ResultingParentHandle = $raceCreation.ParentIdentity
       } catch {
-        $errorCode = if ($_.Exception -is [ComponentModel.Win32Exception]) { $_.Exception.NativeErrorCode } else { $null }
+        $errorCode = Get-Win32ErrorCode $_.Exception
         $script:RaceEvidence.Result = 'rejected:' + $_.Exception.GetType().Name
         $script:RaceEvidence.NativeErrorCode = $errorCode
       }
