@@ -7,7 +7,7 @@ import path from 'node:path'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadCredentials, saveCredentials } from '../../packages/agent/src/auth'
-import { loadConfig, saveConfig } from '../../packages/agent/src/config'
+import { loadConfig, saveConfig, updateConfig } from '../../packages/agent/src/config'
 import { checkLicenseGuard, createMachineId, validateLicense } from '../../packages/agent/src/license'
 import { AgentSwarmCredentialStore } from '../../packages/agent/src/services/swarm/credential-store'
 import { AgentFsService } from '../../packages/agent/src/services/fs-service'
@@ -180,6 +180,44 @@ describe('agent secret storage', () => {
     expect(fs.readFileSync(filePath, 'utf8')).not.toContain('legacy-plaintext-password')
     expect(fileMode(filePath)).toBe(0o600)
     fs.rmSync(projectPath, { recursive: true, force: true })
+  })
+
+  it('never replaces an invalid existing master key', () => {
+    fs.mkdirSync(xyvaPath(), { recursive: true })
+    const keyPath = xyvaPath('secret-store.key')
+    fs.writeFileSync(keyPath, 'not-a-valid-master-key', { mode: 0o600 })
+
+    expect(() => saveCredentials({
+      token: 'synthetic-token',
+      email: 'qa@example.test',
+      expiresAt: Date.now() + 60_000,
+      portalUrl: 'https://xyva.ai',
+    })).toThrow(/key is invalid/i)
+    expect(fs.readFileSync(keyPath, 'utf8')).toBe('not-a-valid-master-key')
+    expect(fs.existsSync(xyvaPath('credentials.json'))).toBe(false)
+  })
+
+  it('refuses corrupt sealed configuration without replacing it with defaults', () => {
+    saveConfig({
+      aiProvider: 'openai',
+      aiApiKeys: { openai: 'synthetic-api-key' },
+      aiDefaultModels: { openai: 'gpt-5' },
+      flowProviderGrants: [],
+      gitlabToken: null,
+      githubToken: null,
+      youtrackToken: null,
+      port: 7900,
+    })
+    const configPath = xyvaPath('config.json')
+    const corrupted = JSON.stringify({
+      ...JSON.parse(fs.readFileSync(configPath, 'utf8')),
+      aiApiKeys: { openai: 'sealed:v1:invalid.invalid.invalid' },
+    })
+    fs.writeFileSync(configPath, corrupted, { mode: 0o600 })
+
+    expect(() => loadConfig()).toThrow(/cannot be decrypted/i)
+    expect(() => updateConfig({ port: 7901 })).toThrow(/cannot be decrypted/i)
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(corrupted)
   })
 })
 

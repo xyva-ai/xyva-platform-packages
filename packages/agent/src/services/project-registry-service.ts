@@ -5,7 +5,7 @@ import path from 'node:path'
 import { AgentFsService } from './fs-service.js'
 import { SecurityGuard } from '../utils/SecurityGuard.js'
 import { getAgentDataRoot } from '../utils/platform.js'
-import { writePrivateFile } from '../secure-store.js'
+import { readPrivateFile, SecureStoreError, writePrivateFile } from '../secure-store.js'
 
 export interface AgentProjectInfo {
   name: string
@@ -125,12 +125,14 @@ export class AgentProjectRegistryService {
   }
 
   private async ensureRegistryDir(): Promise<void> {
+    if (process.platform === 'win32') return
     await fs.mkdir(path.dirname(this.getRegistryPath()), { recursive: true })
   }
 
   private async readRegistry(): Promise<ProjectsRegistryFile> {
+    const raw = readPrivateFile(this.getRegistryPath())
+    if (raw === null) return { version: REGISTRY_VERSION, projects: [] }
     try {
-      const raw = await fs.readFile(this.getRegistryPath(), 'utf-8')
       const parsed = JSON.parse(raw) as Partial<ProjectsRegistryFile>
       if (parsed.version !== REGISTRY_VERSION || !Array.isArray(parsed.projects)) {
         return { version: REGISTRY_VERSION, projects: [] }
@@ -152,8 +154,9 @@ export class AgentProjectRegistryService {
           }
         }),
       }
-    } catch {
-      return { version: REGISTRY_VERSION, projects: [] }
+    } catch (error) {
+      if (error instanceof SecureStoreError) throw error
+      throw new SecureStoreError('XYVA_SECRET_INVALID', 'Project registry is unreadable; refusing to replace it.')
     }
   }
 
@@ -202,8 +205,9 @@ export class AgentProjectRegistryService {
   }
 
   private hydrateApprovedProjects(): void {
+    const raw = readPrivateFile(this.getRegistryPath())
+    if (raw === null) return
     try {
-      const raw = fsSync.readFileSync(this.getRegistryPath(), 'utf8')
       const parsed = JSON.parse(raw) as Partial<ProjectsRegistryFile>
       if (parsed.version !== REGISTRY_VERSION || !Array.isArray(parsed.projects)) return
 
@@ -216,8 +220,9 @@ export class AgentProjectRegistryService {
           // Invalid or protected registry entries are never approved.
         }
       }
-    } catch {
-      // No prior approvals is the secure default.
+    } catch (error) {
+      if (error instanceof SecureStoreError) throw error
+      throw new SecureStoreError('XYVA_SECRET_INVALID', 'Project registry is unreadable; refusing to ignore it.')
     }
   }
 }
