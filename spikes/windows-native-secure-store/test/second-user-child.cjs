@@ -33,11 +33,12 @@ function assertNodeDenied(operation, name) {
 }
 
 function assertKernelAccessDenied(action, target, name) {
-  const command = "$ErrorActionPreference='Stop'; try { switch ($env:XYVA_PROBE_ACTION) { 'read' { [IO.File]::ReadAllBytes($env:XYVA_PROBE_TARGET) | Out-Null }; 'write' { [IO.File]::AppendAllText($env:XYVA_PROBE_TARGET, 'x') }; 'create' { [IO.File]::WriteAllText($env:XYVA_PROBE_TARGET, 'x') } }; throw 'XYVA_KERNEL_DENIAL_UNEXPECTED_SUCCESS' } catch { if ($_.Exception.HResult -eq -2147024891) { exit 0 }; throw ('XYVA_KERNEL_DENIAL_UNEXPECTED_HRESULT=0x{0:X8}' -f ([uint32]$_.Exception.HResult)) }";
+  const encodedTarget = Buffer.from(target, 'utf8').toString('base64');
+  const command = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedTarget}')); try { switch ('${action}') { 'read' { [IO.File]::ReadAllBytes($target) | Out-Null }; 'write' { [IO.File]::AppendAllText($target, 'x') }; 'create' { [IO.File]::WriteAllText($target, 'x') } } } catch { if ($_.Exception.HResult -eq -2147024891) { exit 0 }; throw ('XYVA_KERNEL_DENIAL_UNEXPECTED_HRESULT=' + $_.Exception.HResult) }; throw 'XYVA_KERNEL_DENIAL_UNEXPECTED_SUCCESS'`;
   const probe = childProcess.spawnSync(
     'powershell.exe',
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
-    { encoding: 'utf8', windowsHide: true, timeout: 10000, env: { ...process.env, XYVA_PROBE_ACTION: action, XYVA_PROBE_TARGET: target } },
+    { encoding: 'utf8', windowsHide: true, timeout: 10000 },
   );
   if (probe.error || probe.status !== 0) {
     const detail = String(probe.stderr || probe.stdout || probe.error?.message || 'no-detail').replace(/[\r\n]+/g, ' ').slice(0, 240);
