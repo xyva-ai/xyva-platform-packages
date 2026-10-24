@@ -39,7 +39,7 @@ if (process.platform !== 'win32') {
       fs.mkdirSync(outsidePath);
       const sentinel = path.join(outsidePath, 'sentinel.txt');
       fs.writeFileSync(sentinel, 'outside-sentinel');
-      const id = `Local\\\\xyva-barrier-${process.pid}-${Date.now()}-swap-${kind}`;
+      const id = `Local\\xyva-barrier-${process.pid}-${Date.now()}-swap-${kind}`;
       const reached = `${id}-reached`;
       const proceed = `${id}-continue`;
       const worker = new Worker(`
