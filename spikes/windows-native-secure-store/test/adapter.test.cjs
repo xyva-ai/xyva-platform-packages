@@ -62,7 +62,7 @@ else {
       assert.notEqual(evidence.childPid, process.pid);
       assert.match(evidence.childSid, /^S-1-5-21-/);
       assert.equal(evidence.administrator, false);
-      assert.deepEqual(evidence.phases, ['token-probed', 'identity-verified', 'positive-addon-control', 'kernel-denials-verified']);
+      assert.deepEqual(evidence.phases, ['token-probed', 'identity-verified', 'positive-addon-control', 'node-denials-verified', 'kernel-denials-verified']);
       if (process.env.XYVA_EVIDENCE_DIR) {
         fs.mkdirSync(process.env.XYVA_EVIDENCE_DIR, { recursive: true });
         fs.writeFileSync(path.join(process.env.XYVA_EVIDENCE_DIR, 'second-user-process.json'), JSON.stringify({

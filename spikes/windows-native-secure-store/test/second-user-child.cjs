@@ -22,14 +22,23 @@ function currentToken() {
   return JSON.parse(probe.stdout);
 }
 
-function assertKernelDenied(operation, name) {
+function assertNodeDenied(operation, name) {
   try {
     operation();
   } catch (error) {
-    if (error?.code === 'EACCES') return;
+    if (error?.code === 'EACCES' || error?.code === 'EPERM') return;
     throw new Error(`XYVA_CHILD_${name}_UNEXPECTED_${error?.code || 'ERROR'}`);
   }
   throw new Error(`XYVA_CHILD_${name}_UNEXPECTED_SUCCESS`);
+}
+
+function assertKernelAccessDenied(action, target, name) {
+  const probe = childProcess.spawnSync(
+    'powershell.exe',
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', `${__dirname}\\kernel-denial-probe.ps1`, '-Action', action, '-Path', target],
+    { encoding: 'utf8', windowsHide: true, timeout: 10000 },
+  );
+  if (probe.error || probe.status !== 0) throw new Error(`XYVA_CHILD_${name}_KERNEL_PROBE_FAILED`);
 }
 
 function main() {
@@ -49,9 +58,13 @@ function main() {
   }
   phases.push('positive-addon-control');
 
-  assertKernelDenied(() => fs.readFileSync(args.get('private-file')), 'PRIVATE_READ');
-  assertKernelDenied(() => fs.appendFileSync(args.get('private-file'), 'x'), 'PRIVATE_WRITE');
-  assertKernelDenied(() => fs.writeFileSync(`${args.get('private-directory')}\\child-create.bin`, 'x'), 'PRIVATE_DIRECTORY_CREATE');
+  assertNodeDenied(() => fs.readFileSync(args.get('private-file')), 'PRIVATE_READ');
+  assertNodeDenied(() => fs.appendFileSync(args.get('private-file'), 'x'), 'PRIVATE_WRITE');
+  assertNodeDenied(() => fs.writeFileSync(`${args.get('private-directory')}\\child-create.bin`, 'x'), 'PRIVATE_DIRECTORY_CREATE');
+  phases.push('node-denials-verified');
+  assertKernelAccessDenied('read', args.get('private-file'), 'PRIVATE_READ');
+  assertKernelAccessDenied('write', args.get('private-file'), 'PRIVATE_WRITE');
+  assertKernelAccessDenied('create', `${args.get('private-directory')}\\child-create.bin`, 'PRIVATE_DIRECTORY_CREATE');
   phases.push('kernel-denials-verified');
 
   fs.writeFileSync(evidencePath, JSON.stringify({
