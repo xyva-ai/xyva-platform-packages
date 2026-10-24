@@ -33,12 +33,13 @@ function assertNodeDenied(operation, name) {
 }
 
 function assertKernelAccessDenied(action, target, name) {
+  const command = "$ErrorActionPreference='Stop'; try { switch ($env:XYVA_PROBE_ACTION) { 'read' { [IO.File]::ReadAllBytes($env:XYVA_PROBE_TARGET) | Out-Null }; 'write' { [IO.File]::AppendAllText($env:XYVA_PROBE_TARGET, 'x') }; 'create' { [IO.File]::WriteAllText($env:XYVA_PROBE_TARGET, 'x') } }; throw 'XYVA_KERNEL_DENIAL_UNEXPECTED_SUCCESS' } catch { if ($_.Exception.HResult -eq -2147024891) { exit 0 }; throw ('XYVA_KERNEL_DENIAL_UNEXPECTED_HRESULT=0x{0:X8}' -f ([uint32]$_.Exception.HResult)) }";
   const probe = childProcess.spawnSync(
     'powershell.exe',
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-File', `${__dirname}\\kernel-denial-probe.ps1`, '-Action', action, '-Path', target],
-    { encoding: 'utf8', windowsHide: true, timeout: 10000 },
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
+    { encoding: 'utf8', windowsHide: true, timeout: 10000, env: { ...process.env, XYVA_PROBE_ACTION: action, XYVA_PROBE_TARGET: target } },
   );
-  if (probe.error || probe.status !== 0) throw new Error(`XYVA_CHILD_${name}_KERNEL_PROBE_FAILED`);
+  if (probe.error || probe.status !== 0) throw new Error(`XYVA_CHILD_${name}_KERNEL_PROBE_FAILED_${probe.status ?? 'ERROR'}`);
 }
 
 function main() {
