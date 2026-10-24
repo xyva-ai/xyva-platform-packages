@@ -59,7 +59,7 @@ function Set-ControlAcl([string] $Path, [bool] $Writable) {
   Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
-$name = 'xyva-native-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+$name = 'xyva-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
 $user = $null
 try {
