@@ -32,18 +32,8 @@ function assertNodeDenied(operation, name) {
   throw new Error(`XYVA_CHILD_${name}_UNEXPECTED_SUCCESS`);
 }
 
-function assertKernelAccessDenied(action, target, name) {
-  const encodedTarget = Buffer.from(target, 'utf8').toString('base64');
-  const command = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedTarget}')); $denied=$false; try { switch ('${action}') { 'read' { [IO.File]::ReadAllBytes($target) | Out-Null }; 'write' { [IO.File]::AppendAllText($target, 'x') }; 'create' { [IO.File]::WriteAllText($target, 'x') } } } catch { if ($_.Exception.HResult -eq -2147024891) { $denied=$true } else { throw ('XYVA_KERNEL_DENIAL_UNEXPECTED_HRESULT=' + $_.Exception.HResult) } }; if (-not $denied) { exit 73 }; exit 0`;
-  const probe = childProcess.spawnSync(
-    'powershell.exe',
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
-    { encoding: 'utf8', windowsHide: true, timeout: 10000 },
-  );
-  if (probe.error || probe.status !== 0) {
-    const detail = String(probe.stderr || probe.stdout || probe.error?.message || 'no-detail').replace(/[\r\n]+/g, ' ').slice(0, 240);
-    throw new Error(`XYVA_CHILD_${name}_KERNEL_PROBE_FAILED_${probe.status ?? 'ERROR'}_${detail}`);
-  }
+function assertNativeAccessDenied(error, name) {
+  if (error !== 5) throw new Error(`XYVA_CHILD_${name}_NATIVE_PROBE_ERROR_${error}`);
 }
 
 function main() {
@@ -67,9 +57,12 @@ function main() {
   assertNodeDenied(() => fs.appendFileSync(args.get('private-file'), 'x'), 'PRIVATE_WRITE');
   assertNodeDenied(() => fs.writeFileSync(`${args.get('private-directory')}\\child-create.bin`, 'x'), 'PRIVATE_DIRECTORY_CREATE');
   phases.push('node-denials-verified');
-  assertKernelAccessDenied('read', args.get('private-file'), 'PRIVATE_READ');
-  assertKernelAccessDenied('write', args.get('private-file'), 'PRIVATE_WRITE');
-  assertKernelAccessDenied('create', `${args.get('private-directory')}\\child-create.bin`, 'PRIVATE_DIRECTORY_CREATE');
+  // Test-only exports are absent from the production build. These calls execute
+  // CreateFileW/CreateDirectoryW in this alternate token and assert the kernel's
+  // ERROR_ACCESS_DENIED, avoiding ambiguity in high-level error translation.
+  assertNativeAccessDenied(addon.testProbeRead(args.get('private-file')), 'PRIVATE_READ');
+  assertNativeAccessDenied(addon.testProbeWrite(args.get('private-file')), 'PRIVATE_WRITE');
+  assertNativeAccessDenied(addon.testProbeCreateDirectory(`${args.get('private-directory')}\\child-create.bin`), 'PRIVATE_DIRECTORY_CREATE');
   phases.push('kernel-denials-verified');
 
   fs.writeFileSync(evidencePath, JSON.stringify({
