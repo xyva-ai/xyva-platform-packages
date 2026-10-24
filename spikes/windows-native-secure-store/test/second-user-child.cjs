@@ -34,7 +34,7 @@ function assertNodeDenied(operation, name) {
 
 function assertKernelAccessDenied(action, target, name) {
   const encodedTarget = Buffer.from(target, 'utf8').toString('base64');
-  const command = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedTarget}')); try { switch ('${action}') { 'read' { [IO.File]::ReadAllBytes($target) | Out-Null }; 'write' { [IO.File]::AppendAllText($target, 'x') }; 'create' { [IO.File]::WriteAllText($target, 'x') } } } catch { if ($_.Exception.HResult -eq -2147024891) { exit 0 }; throw ('XYVA_KERNEL_DENIAL_UNEXPECTED_HRESULT=' + $_.Exception.HResult) }; throw 'XYVA_KERNEL_DENIAL_UNEXPECTED_SUCCESS'`;
+  const command = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedTarget}')); $denied=$false; try { switch ('${action}') { 'read' { [IO.File]::ReadAllBytes($target) | Out-Null }; 'write' { [IO.File]::AppendAllText($target, 'x') }; 'create' { [IO.File]::WriteAllText($target, 'x') } } } catch { if ($_.Exception.HResult -eq -2147024891) { $denied=$true } else { throw ('XYVA_KERNEL_DENIAL_UNEXPECTED_HRESULT=' + $_.Exception.HResult) } }; if (-not $denied) { exit 73 }; exit 0`;
   const probe = childProcess.spawnSync(
     'powershell.exe',
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
