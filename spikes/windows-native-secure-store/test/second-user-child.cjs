@@ -39,7 +39,10 @@ function assertKernelAccessDenied(action, target, name) {
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
     { encoding: 'utf8', windowsHide: true, timeout: 10000, env: { ...process.env, XYVA_PROBE_ACTION: action, XYVA_PROBE_TARGET: target } },
   );
-  if (probe.error || probe.status !== 0) throw new Error(`XYVA_CHILD_${name}_KERNEL_PROBE_FAILED_${probe.status ?? 'ERROR'}`);
+  if (probe.error || probe.status !== 0) {
+    const detail = String(probe.stderr || probe.stdout || probe.error?.message || 'no-detail').replace(/[\r\n]+/g, ' ').slice(0, 240);
+    throw new Error(`XYVA_CHILD_${name}_KERNEL_PROBE_FAILED_${probe.status ?? 'ERROR'}_${detail}`);
+  }
 }
 
 function main() {
