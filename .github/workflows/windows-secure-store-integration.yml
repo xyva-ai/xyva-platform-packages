@@ -1,0 +1,84 @@
+name: Windows secure-store integration evidence
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  integration-x64:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'ci:windows-secure-store-integration' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the exact PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.1
+
+      - name: Build and test the native agent package
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ((git rev-parse HEAD) -ne $env:EXPECTED_SHA) { throw 'Head SHA mismatch' }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual C++ build tools unavailable' }
+          cmd /c "call `"$vs\Common7\Tools\VsDevCmd.bat`" -arch=x64 -host_arch=x64 && set" | ForEach-Object { if ($_ -match '^(.*?)=(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] } }
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build --workspace @xyva/agent
+          $env:XYVA_EVIDENCE_DIR = (New-Item -ItemType Directory evidence -Force).FullName
+          npx vitest run -c vitest.public.config.ts tests/backend/agent-windows-secure-store.test.ts
+          $binary = 'packages/agent/dist/native/win32-x64/xyva_windows_secure_store.node'
+          if (-not (Test-Path -LiteralPath $binary)) { throw 'Native package binary missing' }
+          @{ sha=(git rev-parse HEAD); node=(node --version); npm=(npm --version); architecture=$env:PROCESSOR_ARCHITECTURE; runner=$env:ImageOS; imageVersion=$env:ImageVersion; binarySha=(Get-FileHash -Algorithm SHA256 $binary).Hash; tests='agent-windows-secure-store' } | ConvertTo-Json | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM
+          npm pack --workspace @xyva/agent --pack-destination evidence --ignore-scripts
+          $tarball = Get-ChildItem evidence/xyva-agent-*.tgz | Select-Object -First 1
+          if (-not $tarball) { throw 'Agent package tarball missing' }
+          $packageTest = Join-Path $env:RUNNER_TEMP ('xyva-agent-package-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory $packageTest | Out-Null
+          Push-Location $packageTest
+          try {
+            npm init -y | Out-Null
+            npm install $tarball.FullName --ignore-scripts --no-audit --no-fund
+            $env:XYVA_AGENT_STATE_DIR = Join-Path $packageTest 'state'
+            $env:XYVA_AGENT_TOKEN = 'synthetic-package-token'
+            $env:XYVA_AGENT_EMAIL = 'package@example.test'
+            node node_modules/@xyva/agent/dist/cli.js login --portal-url http://127.0.0.1:1
+            if (-not (Test-Path -LiteralPath (Join-Path $env:XYVA_AGENT_STATE_DIR 'credentials.json'))) { throw 'Packaged agent did not persist credentials' }
+          } finally { Pop-Location; Remove-Item -LiteralPath $packageTest -Recurse -Force }
+
+      - name: Test the exact Node 22-built binary on Node 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+
+      - name: Re-run Windows integration tests on Node 24
+        shell: pwsh
+        run: |
+          npx vitest run -c vitest.public.config.ts tests/backend/agent-windows-secure-store.test.ts
+          $evidence = Get-Content evidence/windows-secure-store-integration.json -Raw | ConvertFrom-Json
+          $evidence | Add-Member -NotePropertyName node24 -NotePropertyValue (node --version)
+          $evidence | ConvertTo-Json | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM
+          Get-Content evidence/windows-secure-store-integration.json -Raw | ConvertFrom-Json | Out-Null
+
+      - name: Upload secret-free evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-secure-store-integration-${{ github.run_id }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 14
