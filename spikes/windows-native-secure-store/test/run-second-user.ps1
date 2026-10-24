@@ -80,8 +80,13 @@ try {
   $exitCode = [XyvaSecondUserProcess]::StartAndWait($name, $env:COMPUTERNAME, $plainPassword, $NodeExe, $arguments, (Split-Path -Parent $NodeExe), [ref] $childProcessId)
   if (-not (Test-Path -LiteralPath $EvidencePath)) { throw 'XYVA_SECOND_USER_EVIDENCE_MISSING' }
   $evidence = Get-Content -LiteralPath $EvidencePath -Raw | ConvertFrom-Json
-  if ($exitCode -ne 0 -or $evidence.status -ne 'PASS' -or $evidence.pid -ne $childProcessId -or $evidence.sid -ne $user.SID.Value -or $evidence.administrator) { throw 'XYVA_SECOND_USER_CHILD_VALIDATION_FAILED' }
+  if ($exitCode -ne 0 -or $evidence.status -ne 'PASS' -or $evidence.pid -ne $childProcessId -or $evidence.sid -ne $user.SID.Value -or $evidence.administrator) {
+    throw ("XYVA_SECOND_USER_CHILD_VALIDATION_FAILED exit={0} status={1} code={2} pid={3} sid={4}" -f $exitCode, $evidence.status, $evidence.code, $evidence.pid, $evidence.sid)
+  }
   [pscustomobject]@{ status = 'PASS'; childPid = $childProcessId; childSid = $user.SID.Value; administrator = [bool]$evidence.administrator; phases = @($evidence.phases) } | ConvertTo-Json -Compress | Set-Content -LiteralPath $EvidencePath -Encoding utf8NoBOM
 } finally {
+  if ($env:XYVA_EVIDENCE_DIR -and (Test-Path -LiteralPath $EvidencePath)) {
+    Copy-Item -LiteralPath $EvidencePath -Destination (Join-Path $env:XYVA_EVIDENCE_DIR 'second-user-process-raw.json') -Force
+  }
   if ($null -ne $user) { Remove-LocalUser -Name $name -ErrorAction SilentlyContinue }
 }
