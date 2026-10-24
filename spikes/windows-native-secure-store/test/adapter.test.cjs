@@ -22,6 +22,35 @@ else {
     addon.createPrivateFile(root, 'once', Buffer.from('x'));
     assert.throws(() => addon.createPrivateFile(root, 'once', Buffer.from('x')), { code: 'XYVA_ALREADY_EXISTS' });
     assert.throws(() => addon.createPrivateFile(root, '..', Buffer.from('x')), { code: 'XYVA_INVALID_INPUT' });
+    assert.throws(() => addon.createPrivateFile(root, 'nested\\leaf', Buffer.from('x')), { code: 'XYVA_INVALID_INPUT' });
+    assert.throws(() => addon.createPrivateFile(root, 'alternate:stream', Buffer.from('x')), { code: 'XYVA_INVALID_INPUT' });
+  });
+
+  test('fails closed for a junction root without following its target', () => {
+    const basePath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-reparse-root-'));
+    const targetPath = path.join(basePath, 'target');
+    const junctionPath = path.join(basePath, 'junction');
+    try {
+      fs.mkdirSync(targetPath);
+      fs.writeFileSync(path.join(targetPath, 'sentinel.bin'), 'synthetic-sentinel');
+      fs.symlinkSync(targetPath, junctionPath, 'junction');
+      assert.throws(() => addon.openTrustedRoot(junctionPath), { code: 'XYVA_UNTRUSTED_ROOT' });
+      assert.equal(fs.readFileSync(path.join(targetPath, 'sentinel.bin'), 'utf8'), 'synthetic-sentinel');
+      assert.deepEqual(fs.readdirSync(targetPath), ['sentinel.bin']);
+    } finally {
+      if (fs.existsSync(junctionPath)) fs.rmdirSync(junctionPath);
+      fs.rmSync(basePath, { recursive: true, force: true });
+    }
+  });
+
+  test('releases a root capability before controlled cleanup', () => {
+    const cleanupPath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-root-cleanup-'));
+    let cleanupRoot = addon.openTrustedRoot(cleanupPath);
+    addon.createPrivateFile(cleanupRoot, 'synthetic.bin', Buffer.from('x'));
+    cleanupRoot = null;
+    global.gc?.();
+    assert.doesNotThrow(() => fs.rmSync(cleanupPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));
+    assert.equal(fs.existsSync(cleanupPath), false);
   });
 
   test('separate non-admin process proves kernel access denials', { timeout: 60000 }, () => {
