@@ -34,6 +34,7 @@ jobs:
           cl.exe /? | Select-Object -First 1
           npm --prefix spikes/windows-native-secure-store ci --ignore-scripts --no-audit --no-fund
           npm --prefix spikes/windows-native-secure-store run build
+          $env:XYVA_EVIDENCE_DIR = (Resolve-Path evidence)
           npm --prefix spikes/windows-native-secure-store test
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -41,12 +42,13 @@ jobs:
       - name: Test the exact Node 22-built binary on Node 24
         shell: pwsh
         run: |
+          $env:XYVA_EVIDENCE_DIR = (Resolve-Path evidence)
           npm --prefix spikes/windows-native-secure-store test
           Add-Content evidence/windows-native-store.json ("`nnode24=" + (node --version))
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: windows-native-secure-store-evidence-${{ github.run_id }}
-          path: evidence/windows-native-store.json
+          path: evidence/*.json
           if-no-files-found: error
           retention-days: 14
