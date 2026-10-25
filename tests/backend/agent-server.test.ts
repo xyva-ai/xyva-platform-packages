@@ -212,10 +212,10 @@ beforeAll(async () => {
   await startMockPortal()
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "xyva-agent-test-"))
   // Pre-seed credentials so the CLI does not try the loginFlow listener.
-  fs.mkdirSync(path.join(tmpHome, ".xyva"), { recursive: true })
+  fs.mkdirSync(path.join(tmpHome, ".xyva"), { recursive: true, mode: 0o700 })
   const machineId = crypto.randomUUID()
   signedLicenseToken = signTestLicense(machineId)
-  fs.writeFileSync(path.join(tmpHome, ".xyva", "machine-id.json"), JSON.stringify({ version: 1, machineId }))
+  fs.writeFileSync(path.join(tmpHome, ".xyva", "machine-id.json"), JSON.stringify({ version: 1, machineId }), { mode: 0o600 })
   fs.writeFileSync(path.join(tmpHome, ".xyva", "license.json"), JSON.stringify({
     version: 2,
     source: "jwt",
@@ -226,7 +226,7 @@ beforeAll(async () => {
     offlineSince: null,
     machineId,
     portalUrl: mockPortalUrl,
-  }))
+  }), { mode: 0o600 })
   const creds = {
     token: "test-fixture-token-not-real",
     email: "fixture@xyva.test",
@@ -236,6 +236,7 @@ beforeAll(async () => {
   fs.writeFileSync(
     path.join(tmpHome, ".xyva", "credentials.json"),
     JSON.stringify(creds, null, 2),
+    { mode: 0o600 },
   )
 
   const env = {
