@@ -320,15 +320,13 @@ function Test-TimeoutFaultInjection {
   $name = "xyva-to-" + [guid]::NewGuid().ToString('N').Substring(0, 10)
   $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
   $user = $null
-  $probeScript = Join-Path $root 'timeout-probe.ps1'
   $timeoutEvidence = [ordered]@{ TimeoutObserved = $false; Terminated = $false; ExitCode = $null; HandlesClosed = $false; ChildPid = $null }
   try {
     $user = New-LocalUser -Name $name -Password $password -AccountNeverExpires -ErrorAction Stop
-    Set-Content -LiteralPath $probeScript -Value 'while ($true) { [Threading.Thread]::Sleep(1000) }' -Encoding utf8NoBOM
-    $pwsh = Join-Path $PSHOME 'pwsh.exe'
-    $arguments = "$(Quote-ChildArgument $pwsh) -NoProfile -NonInteractive -File $(Quote-ChildArgument $probeScript)"
+    $ping = Join-Path $env:SystemRoot 'System32\PING.EXE'
+    $arguments = 'PING.EXE -n 300 127.0.0.1'
     try {
-      [XyvaAclNative]::RunProcessWithLogonTimeout($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot, 5000)
+      [XyvaAclNative]::RunProcessWithLogonTimeout($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $ping, $arguments, $env:SystemRoot, 5000)
       throw 'Timeout probe unexpectedly completed'
     } catch [TimeoutException] {
       $timeoutEvidence.TimeoutObserved = $true
@@ -346,7 +344,6 @@ function Test-TimeoutFaultInjection {
       Remove-LocalUser -Name $name -ErrorAction Stop
       Assert-LocalUserAbsent $name $user.SID.Value
     }
-    if (Test-Path -LiteralPath $probeScript) { Remove-Item -LiteralPath $probeScript -Force -ErrorAction Stop }
   }
 }
 
