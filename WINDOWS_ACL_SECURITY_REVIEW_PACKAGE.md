@@ -2,7 +2,7 @@
 
 Status: `INTERNAL_SELF_REVIEW_ONLY`  
 Branch: `codex/windows-acl-security-spike`  
-Letzter codewirksam geprüfter Head: `311224e7fcee155d17ab28618840ac1cc66e666c`
+Letzter codewirksam geprüfter Head: `abc955aab4bfbcaccaabd617440fa1e9295043e8`
 PR: [#17](https://github.com/xyva-ai/xyva-platform-packages/pull/17)
 
 ## Scope und Threat Model
@@ -43,9 +43,9 @@ nicht durch einen unabhängigen Windows-Security-Reviewer freigegeben.
 
 ## Nachweise
 
-Windows-Server-2025-CI-Run [40218421133](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40218421133):
+Windows-Server-2025-CI-Run [40219267339](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40219267339):
 
-- Evidence-Artefakt `12607549682`, Schema `xyva.windows-acl-poc.v3`, nicht abgelaufen
+- Evidence-Artefakt `12608647121`, Schema `xyva.windows-acl-poc.v3`, nicht abgelaufen
 - 40 `PASS`, 0 `FAIL`, 3 `NOT_EXECUTED`
 - Nicht-Admin-Zweitprozess mit SID-/PID-Nachweis und Kernel-ACCESS_DENIED
 - File- und Directory-Parent-Swap mit Barrieren, externem Sentinel und
@@ -53,6 +53,9 @@ Windows-Server-2025-CI-Run [40218421133](https://github.com/xyva-ai/xyva-platfor
 - Reparse-Point-Ablehnung, Owner-/DACL-/ACE-/Vererbungsprüfung
 - Timeout-Termination, Prozess-/Thread-Handle-Cleanup und sprachunabhängige
   lokale Benutzer-/SID-Bereinigung
+- Workflow-Gate akzeptiert nur die drei explizit dokumentierten
+  `NOT_EXECUTED`-Grenzen; zusätzliche, fehlende oder doppelte Evidence wird
+  fail-closed zurückgewiesen
 
 ## Missing-DACL-Entscheidung
 
