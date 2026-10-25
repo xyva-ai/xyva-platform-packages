@@ -86,20 +86,23 @@ static PSECURITY_DESCRIPTOR PrivateDescriptor() {
   return ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), 1, &descriptor, 0) ? descriptor : 0;
 }
 
-static bool ApplyPrivateAcl(HANDLE handle) {
+static bool ApplyPrivateSecurity(HANDLE handle) {
   PSECURITY_DESCRIPTOR descriptor = PrivateDescriptor();
   if (!descriptor) return false;
   PACL dacl = 0;
+  PSID owner = 0;
   BOOL present = FALSE;
   BOOL defaulted = FALSE;
-  const bool parsed = GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) && present && dacl;
-  // Replacing the DACL alone leaves an inherited DACL unprotected.  The
-  // validator deliberately requires SE_DACL_PROTECTED, so set that control
-  // bit on the already-open handle before accepting a newly-created root.
-  const DWORD result = parsed
+  const bool daclParsed = GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) && present && dacl;
+  const bool ownerParsed = GetSecurityDescriptorOwner(descriptor, &owner, &defaulted) && owner;
+  // A directory created by an elevated token can initially be owned by the
+  // Administrators group.  Apply the descriptor's explicit process-user owner
+  // and protected DACL to the already-open handle, then verify both before it
+  // becomes a trusted capability.
+  const DWORD result = daclParsed && ownerParsed
     ? SetSecurityInfo(handle, SE_FILE_OBJECT,
-      DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-      0, 0, dacl, 0)
+      OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+      owner, 0, dacl, 0)
     : ERROR_INVALID_SECURITY_DESCR;
   LocalFree(descriptor);
   return result == ERROR_SUCCESS;
@@ -191,10 +194,10 @@ static napi_value EnsureTrustedRoot(napi_env env, napi_callback_info info) {
   bool created = CreateDirectoryW(rootPath.c_str(), 0) != FALSE;
   if (!created && GetLastError() != ERROR_ALREADY_EXISTS) { Fail(env, "XYVA_ROOT_CREATE_FAILED"); return 0; }
   Root* root = new Root();
-  root->handle = CreateFileW(rootPath.c_str(), READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES,
+  root->handle = CreateFileW(rootPath.c_str(), READ_CONTROL | WRITE_OWNER | WRITE_DAC | FILE_READ_ATTRIBUTES,
     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING,
     FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, 0);
-  if (root->handle == INVALID_HANDLE_VALUE || !IsNotReparsePoint(root->handle) || (created && !ApplyPrivateAcl(root->handle)) || !HasPrivateAcl(root->handle)) {
+  if (root->handle == INVALID_HANDLE_VALUE || !IsNotReparsePoint(root->handle) || (created && !ApplyPrivateSecurity(root->handle)) || !HasPrivateAcl(root->handle)) {
     delete root;
     Fail(env, created ? "XYVA_ROOT_INITIALIZATION_FAILED" : "XYVA_INSECURE_ROOT"); return 0;
   }
