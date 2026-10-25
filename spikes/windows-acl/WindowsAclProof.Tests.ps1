@@ -332,7 +332,7 @@ function Test-TimeoutFaultInjection {
       throw 'Timeout probe unexpectedly completed'
     } catch [TimeoutException] {
       $timeoutEvidence.TimeoutObserved = $true
-      if ($_.Exception.Message -notmatch 'pid=(\d+);terminated=true;exitCode=(\d+)') { throw 'Timeout termination evidence was malformed' }
+      if ($_.Exception.Message -notmatch 'pid=(\d+);terminated=true;exitCode=(\d+)') { throw "Timeout termination evidence was malformed: $($_.Exception.Message)" }
       $timeoutEvidence.ChildPid = [int]$Matches[1]
       $timeoutEvidence.ExitCode = [int]$Matches[2]
       $timeoutEvidence.Terminated = $true
