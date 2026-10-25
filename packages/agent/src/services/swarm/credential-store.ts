@@ -26,6 +26,7 @@ export class AgentSwarmCredentialStore {
 
   async save(projectPath: string, credentials: { username: string; password: string }): Promise<{ ok: boolean; error?: string }> {
     this.ensureProjectPath(projectPath)
+    this.assertExistingSecretCanBeReplaced(projectPath)
 
     const payload: StoredSwarmCredentials = {
       version: 2,
@@ -87,6 +88,32 @@ export class AgentSwarmCredentialStore {
 
   private getSecretContext(projectPath: string): string {
     return `swarm-credentials:${getProjectHash(projectPath)}`
+  }
+
+  private assertExistingSecretCanBeReplaced(projectPath: string): void {
+    const raw = readPrivateFile(this.getCredentialsPath(projectPath))
+    if (raw === null) return
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<StoredSwarmCredentials>
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+        || typeof parsed.projectPath !== 'string'
+        || path.resolve(parsed.projectPath) !== path.resolve(projectPath)
+        || typeof parsed.username !== 'string'
+        || typeof parsed.password !== 'string'
+        || typeof parsed.savedAt !== 'string') {
+        throw new Error('invalid')
+      }
+      if (isSealedSecret(parsed.password)) {
+        // A replacement must prove it still owns the existing ciphertext. This
+        // prevents a missing or invalid master key from creating a fresh key
+        // and silently destroying an encrypted swarm credential.
+        unsealSecret(parsed.password, this.getSecretContext(projectPath))
+      }
+    } catch (error) {
+      if (error instanceof SecureStoreError) throw error
+      throw new SecureStoreError('XYVA_SECRET_INVALID', 'Stored swarm credentials are unreadable; refusing to overwrite them.')
+    }
   }
 
   private async readCredentials(projectPath: string): Promise<StoredSwarmCredentials | null> {

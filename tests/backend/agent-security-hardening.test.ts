@@ -182,6 +182,25 @@ describe('agent secret storage', () => {
     fs.rmSync(projectPath, { recursive: true, force: true })
   })
 
+  it('never overwrites sealed swarm credentials when the master key is missing', async () => {
+    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-project-'))
+    fs.writeFileSync(path.join(projectPath, 'playwright.config.ts'), 'export default {}')
+    SecurityGuard.approveProjectRoot(projectPath)
+    const store = new AgentSwarmCredentialStore()
+    await store.save(projectPath, { username: 'qa-user', password: 'first-synthetic-password' })
+
+    const credentialsDirectory = xyvaPath('swarm-credentials')
+    const filePath = path.join(credentialsDirectory, fs.readdirSync(credentialsDirectory)[0])
+    const before = fs.readFileSync(filePath, 'utf8')
+    fs.rmSync(xyvaPath('secret-store.key'))
+
+    await expect(store.save(projectPath, { username: 'qa-user', password: 'second-synthetic-password' }))
+      .rejects.toThrow(/key is missing/i)
+    expect(fs.existsSync(xyvaPath('secret-store.key'))).toBe(false)
+    expect(fs.readFileSync(filePath, 'utf8')).toBe(before)
+    fs.rmSync(projectPath, { recursive: true, force: true })
+  })
+
   it('never replaces an invalid existing master key', () => {
     fs.mkdirSync(xyvaPath(), { recursive: true })
     const keyPath = xyvaPath('secret-store.key')
