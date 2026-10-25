@@ -7,7 +7,12 @@ param(
   [string] $ProtectedFile,
   [string] $ProtectedDirectory,
   [string] $ChildEvidencePath,
-  [int] $ParentPid
+  [int] $ParentPid,
+  [switch] $RaceSwap,
+  [string] $SwapParent,
+  [string] $SwapMoved,
+  [string] $SwapOutside,
+  [string] $RaceEvidencePath
 )
 
 . "$PSScriptRoot/WindowsAclProof.ps1"
@@ -17,6 +22,7 @@ $failure = $null
 $results = [System.Collections.Generic.List[object]]::new()
 $script:RaceEvidence = $null
 $script:DirectoryRaceEvidence = $null
+$script:SecondProcessEvidence = $null
 
 function Add-Result([string] $Name, [string] $Status, [string] $Detail) {
   $results.Add([pscustomobject]@{ Requirement = $Name; Status = $Status; Detail = $Detail })
@@ -158,6 +164,20 @@ if ($ChildProbe) {
     $phase = 'private-access-denied'; $phases.Add($phase); $phase = 'controlled-exit'; $phases.Add($phase); [pscustomobject]@{ Phase = $phase; Phases = @($phases); Pid = $PID; ParentPid = $ParentPid; Sid = $identity.User.Value; ExitCode = 0 } | ConvertTo-Json | Set-Content -LiteralPath $ChildEvidencePath -Encoding utf8NoBOM; exit 0
   } catch { [pscustomobject]@{ Phase = $phase; Phases = @($phases); Pid = $PID; ParentPid = $ParentPid; ErrorType = $_.Exception.GetType().Name; ExitCode = 71 } | ConvertTo-Json | Set-Content -LiteralPath $ChildEvidencePath -Encoding utf8NoBOM; exit 71 }
 }
+if ($RaceSwap) {
+  $phase = 'race-process-started'
+  try {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    if ([Security.Principal.WindowsPrincipal]::new($identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Race attacker unexpectedly has administrator rights' }
+    Move-Item -LiteralPath $SwapParent -Destination $SwapMoved -ErrorAction Stop
+    New-Item -ItemType Junction -Path $SwapParent -Target $SwapOutside -ErrorAction Stop | Out-Null
+    [pscustomobject]@{ ExitCode = 0; Pid = $PID; Sid = $identity.User.Value; Administrator = $false; Swapped = $true } | ConvertTo-Json | Set-Content -LiteralPath $RaceEvidencePath -Encoding utf8NoBOM
+    exit 0
+  } catch {
+    [pscustomobject]@{ ExitCode = 73; Pid = $PID; Sid = $identity.User.Value; Administrator = $null; Swapped = $false; ErrorType = $_.Exception.GetType().Name; Error = $_.Exception.Message } | ConvertTo-Json | Set-Content -LiteralPath $RaceEvidencePath -Encoding utf8NoBOM
+    exit 73
+  }
+}
 if ([string]::IsNullOrEmpty($EvidencePath)) { throw 'EvidencePath is required for the parent test harness' }
 
 function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirectory, [string] $ProtectedFile, [string] $ProtectedRoot, [string] $RaceProbeParent) {
@@ -201,9 +221,41 @@ function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirec
     if ($exitCode -ne 0 -or -not (Test-Path -LiteralPath $childEvidence)) { throw "Second-process ACL probe failed: exit=$exitCode evidence=$([bool](Test-Path -LiteralPath $childEvidence))" }
     $child = Get-Content -LiteralPath $childEvidence -Raw | ConvertFrom-Json
     if ($child.ExitCode -ne 0 -or $child.Pid -eq $PID -or $child.ParentPid -ne $PID -or $child.Sid -ne $user.SID.Value -or @($child.Phases) -notcontains 'controlled-exit') { throw 'Second-process evidence validation failed' }
+    $script:SecondProcessEvidence = [pscustomobject]@{
+      Pid = $child.Pid
+      ParentPid = $child.ParentPid
+      Sid = $child.Sid
+      ExpectedSid = $user.SID.Value
+      ExitCode = $child.ExitCode
+      Phases = @($child.Phases)
+      Cleanup = $true
+    }
     Add-Result 'unprivileged-separate-process-access-controls' 'PASS' "child pid=$($child.Pid); parent pid=$($child.ParentPid); sid=$($child.Sid); phases=$(@($child.Phases) -join ',')"
   } finally {
     if ($null -ne $token) { $token.Dispose() }
+    if ($null -ne $user) { Remove-LocalUser -Name $name -ErrorAction SilentlyContinue }
+  }
+}
+
+function Invoke-RaceSwapProcess([string] $RaceRoot, [string] $Parent, [string] $Moved, [string] $Outside) {
+  $name = "xyva-race-" + [guid]::NewGuid().ToString('N').Substring(0, 11)
+  $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
+  $user = $null
+  try {
+    $user = New-LocalUser -Name $name -Password $password -AccountNeverExpires -ErrorAction Stop
+    Set-ControlAreaAcl $RaceRoot $true $true
+    Set-ControlAreaAcl $Parent $true $true
+    Set-ControlAreaAcl $Outside $true $true
+    $raceEvidencePath = Join-Path $RaceRoot 'race-attacker-evidence.json'
+    $scriptPath = $PSCommandPath
+    $pwsh = Join-Path $PSHOME 'pwsh.exe'
+    $arguments = "$(Quote-ChildArgument $pwsh) -NoProfile -NonInteractive -File $(Quote-ChildArgument $scriptPath) -RaceSwap -SwapParent $(Quote-ChildArgument $Parent) -SwapMoved $(Quote-ChildArgument $Moved) -SwapOutside $(Quote-ChildArgument $Outside) -RaceEvidencePath $(Quote-ChildArgument $raceEvidencePath)"
+    $exitCode = [XyvaAclNative]::RunProcessWithLogon($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot)
+    if ($exitCode -ne 0 -or -not (Test-Path -LiteralPath $raceEvidencePath)) { throw "Race attacker process failed: exit=$exitCode" }
+    $evidence = Get-Content -LiteralPath $raceEvidencePath -Raw | ConvertFrom-Json
+    if ($evidence.ExitCode -ne 0 -or $evidence.Pid -eq $PID -or $evidence.Sid -eq (Get-CurrentSid) -or $evidence.Administrator -or -not $evidence.Swapped) { throw 'Race attacker evidence validation failed' }
+    return $evidence
+  } finally {
     if ($null -ne $user) { Remove-LocalUser -Name $name -ErrorAction SilentlyContinue }
   }
 }
@@ -324,8 +376,8 @@ try {
         param($resolution)
         $raceState.RootHandle = $resolution.RootIdentity; $raceState.ParentHandle = $resolution.ParentIdentity; $raceState.BarrierReached = $true; $raceState.SwapPerformedBySid = Get-CurrentSid
         try {
-          Move-Item -LiteralPath $swapParent -Destination $swapMoved -ErrorAction Stop
-          New-Item -ItemType Junction -Path $swapParent -Target $swapOutside -ErrorAction Stop | Out-Null
+          $attacker = Invoke-RaceSwapProcess $raceRoot $swapParent $swapMoved $swapOutside
+          $raceState.SwapPerformedBySid = $attacker.Sid
           $raceState.HookReached = $true
         } catch {
           $raceState.HookErrorType = $_.Exception.GetType().Name
@@ -368,8 +420,8 @@ try {
         param($resolution)
         $raceState.RootHandle = $resolution.RootIdentity; $raceState.ParentHandle = $resolution.ParentIdentity; $raceState.BarrierReached = $true; $raceState.SwapPerformedBySid = Get-CurrentSid
         try {
-          Move-Item -LiteralPath $swapParent -Destination $swapMoved -ErrorAction Stop
-          New-Item -ItemType Junction -Path $swapParent -Target $swapOutside -ErrorAction Stop | Out-Null
+          $attacker = Invoke-RaceSwapProcess $raceRoot $swapParent $swapMoved $swapOutside
+          $raceState.SwapPerformedBySid = $attacker.Sid
           $raceState.HookReached = $true
         } catch { $raceState.HookErrorType = $_.Exception.GetType().Name; throw }
       }).GetNewClosure()
@@ -408,6 +460,7 @@ try {
     PowerShell = $PSVersionTable.PSVersion.ToString()
     RunnerOS = $env:RUNNER_OS
     Results = @($results)
+    SecondProcessEvidence = $script:SecondProcessEvidence
     RaceEvidence = $script:RaceEvidence
     DirectoryRaceEvidence = $script:DirectoryRaceEvidence
   }
