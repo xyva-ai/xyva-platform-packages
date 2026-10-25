@@ -367,7 +367,7 @@ try {
     $raceRoot = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-" + [guid]::NewGuid())
     $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-outside-" + [guid]::NewGuid())
     $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape.txt'
-    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; Result = $null; ResultingParentHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; NativeErrorCode = $null }
+    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; Result = $null; ResultingParentHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
     try {
       New-PrivateDirectory $raceRoot; New-PrivateDirectory $parent; [IO.Directory]::CreateDirectory($outside) | Out-Null
       $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
@@ -381,6 +381,7 @@ try {
           $raceState.HookReached = $true
         } catch {
           $raceState.HookErrorType = $_.Exception.GetType().Name
+          $raceState.HookErrorMessage = $_.Exception.Message
           throw
         }
       }).GetNewClosure()
@@ -411,7 +412,7 @@ try {
     $raceRoot = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-directory-race-" + [guid]::NewGuid())
     $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-directory-race-outside-" + [guid]::NewGuid())
     $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape'
-    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; Result = $null; ResultingDirectoryHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; NativeErrorCode = $null }
+    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; Result = $null; ResultingDirectoryHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
     try {
       New-PrivateDirectory $raceRoot | Out-Null; New-PrivateDirectory $parent | Out-Null; [IO.Directory]::CreateDirectory($outside) | Out-Null
       $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
@@ -423,7 +424,7 @@ try {
           $attacker = Invoke-RaceSwapProcess $raceRoot $swapParent $swapMoved $swapOutside
           $raceState.SwapPerformedBySid = $attacker.Sid
           $raceState.HookReached = $true
-        } catch { $raceState.HookErrorType = $_.Exception.GetType().Name; throw }
+        } catch { $raceState.HookErrorType = $_.Exception.GetType().Name; $raceState.HookErrorMessage = $_.Exception.Message; throw }
       }).GetNewClosure()
       try {
         $creation = New-PrivateDirectory $target
