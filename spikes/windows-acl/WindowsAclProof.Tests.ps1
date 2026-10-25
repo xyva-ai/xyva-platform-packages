@@ -441,7 +441,6 @@ try {
       if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Race test sentinel was modified' }
       if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape.txt')) { throw 'Parent swap redirected native file creation outside validated path' }
       $raceState.ExternalUnchanged = $true
-      Assert-RaceEvidence $raceState $moved 'must-not-escape.txt'
     } finally {
       $script:BeforePrivateCreateHook = $null
       if (Test-Path -LiteralPath $parent) { Remove-Item -LiteralPath $parent -Force }
@@ -450,6 +449,7 @@ try {
       $raceState.Cleanup = -not (Test-Path -LiteralPath $raceRoot) -and -not (Test-Path -LiteralPath $outside)
       $script:RaceEvidence = [pscustomobject]$raceState
     }
+    Assert-RaceEvidence $raceState $moved 'must-not-escape.txt'
   }
   Invoke-RequiredTest 'deterministic-directory-parent-swap-race-rejection' {
     $raceRoot = Join-Path $env:PUBLIC ("xyva-acl-directory-race-" + [guid]::NewGuid())
@@ -483,7 +483,6 @@ try {
       if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Directory race test sentinel was modified' }
       if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape')) { throw 'Parent swap redirected native directory creation outside validated path' }
       $raceState.ExternalUnchanged = $true
-      Assert-RaceEvidence $raceState $moved 'must-not-escape'
     } finally {
       $script:BeforePrivateDirectoryCreateHook = $null
       if (Test-Path -LiteralPath $parent) { Remove-Item -LiteralPath $parent -Force }
@@ -492,6 +491,7 @@ try {
       $raceState.Cleanup = -not (Test-Path -LiteralPath $raceRoot) -and -not (Test-Path -LiteralPath $outside)
       $script:DirectoryRaceEvidence = [pscustomobject]$raceState
     }
+    Assert-RaceEvidence $raceState $moved 'must-not-escape'
   }
 } catch {
   $failure = $_
