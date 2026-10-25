@@ -338,7 +338,7 @@ function Test-TimeoutFaultInjection {
     }
     try { Get-Process -Id $timeoutEvidence.ChildPid -ErrorAction Stop | Out-Null; throw 'Timed-out child is still running' } catch { if ($_.Exception.Message -eq 'Timed-out child is still running') { throw } }
     Assert-TimeoutEvidence ([pscustomobject]$timeoutEvidence)
-    Add-Result 'timeout-fault-injection-termination' 'PASS' "pid=$($timeoutEvidence.ChildPid);exitCode=$($timeoutEvidence.ExitCode);handlesClosed=true"
+    Add-Result 'timeout-fault-injection-evidence' 'PASS' "pid=$($timeoutEvidence.ChildPid);exitCode=$($timeoutEvidence.ExitCode);handlesClosed=true"
   } finally {
     if ($null -ne $user) {
       Remove-LocalUser -Name $name -ErrorAction Stop
@@ -362,7 +362,7 @@ function Test-CleanupAfterInjectedFailure {
       Assert-LocalUserAbsent $name $user.SID.Value
     }
   }
-  Add-Result 'cleanup-after-injected-verification-failure' 'PASS' 'temporary account removed and absence verified after injected failure'
+  Add-Result 'cleanup-after-injected-verification-evidence' 'PASS' 'temporary account removed and absence verified after injected failure'
 }
 
 function Assert-RaceEvidence($State, [string] $Moved, [string] $Leaf) {
