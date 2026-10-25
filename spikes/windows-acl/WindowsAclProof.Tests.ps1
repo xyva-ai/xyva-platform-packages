@@ -182,7 +182,7 @@ function Get-PlatformEvidence {
 if ($TimeoutProbe) {
   if ([string]::IsNullOrEmpty($TimeoutMarkerPath)) { exit 77 }
   [IO.File]::WriteAllText($TimeoutMarkerPath, ([Diagnostics.Process]::GetCurrentProcess().Id).ToString())
-  Start-Sleep -Seconds 30
+  Start-Sleep -Seconds 300
   exit 0
 }
 
@@ -328,7 +328,7 @@ function Test-TimeoutFaultInjection {
     $pwsh = Join-Path $PSHOME 'pwsh.exe'
     $arguments = "$(Quote-ChildArgument $pwsh) -NoProfile -NonInteractive -File $(Quote-ChildArgument $scriptPath) -TimeoutProbe -TimeoutMarkerPath $(Quote-ChildArgument $marker)"
     try {
-      [XyvaAclNative]::RunProcessWithLogon($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot, 5000)
+      [XyvaAclNative]::RunProcessWithLogonTimeout($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot, 5000)
       throw 'Timeout probe unexpectedly completed'
     } catch [TimeoutException] {
       $timeoutEvidence.TimeoutObserved = $true

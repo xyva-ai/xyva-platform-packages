@@ -182,6 +182,9 @@ public static class XyvaAclNative {
   public static int RunProcessWithLogon(string username, string domain, string password, string application, string commandLine, string currentDirectory) {
     return RunProcessWithLogon(username, domain, password, application, commandLine, currentDirectory, 30000);
   }
+  public static int RunProcessWithLogonTimeout(string username, string domain, string password, string application, string commandLine, string currentDirectory, uint timeoutMilliseconds) {
+    return RunProcessWithLogon(username, domain, password, application, commandLine, currentDirectory, timeoutMilliseconds);
+  }
   static void ThrowNtStatus(int status) { throw new Win32Exception((int)RtlNtStatusToDosError(status)); }
   static IntPtr OpenRelative(IntPtr root, string component, uint desiredAccess, uint createDisposition, uint createOptions, IntPtr securityDescriptor) {
     if (String.IsNullOrEmpty(component) || component.IndexOf('\\') >= 0 || component.IndexOf('/') >= 0 || component == "." || component == "..") throw new ArgumentException("Unsafe relative path component");
