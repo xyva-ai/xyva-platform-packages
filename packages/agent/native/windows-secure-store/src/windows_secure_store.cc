@@ -319,9 +319,9 @@ static napi_value ReplacePrivateFile(napi_env env, napi_callback_info info) {
   if (existing != INVALID_HANDLE_VALUE) {
     const bool targetOk = IsNotReparsePoint(existing) && HasPrivateAcl(existing);
     CloseHandle(existing);
-    if (!targetOk) { CloseHandle(source); Fail(env, "XYVA_REPLACE_TARGET_INVALID"); return 0; }
+    if (!targetOk) { CloseHandle(source); Fail(env, "XYVA_REPLACE_TARGET_INSECURE"); return 0; }
   } else if (GetLastError() != ERROR_FILE_NOT_FOUND) {
-    CloseHandle(source); Fail(env, "XYVA_REPLACE_TARGET_INVALID"); return 0;
+    CloseHandle(source); Fail(env, "XYVA_REPLACE_TARGET_OPEN_FAILED"); return 0;
   }
   const size_t bytes = sizeof(XYVA_FILE_RENAME_INFORMATION) + target.size() * sizeof(wchar_t);
   std::vector<BYTE> storage(bytes);
