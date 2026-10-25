@@ -251,7 +251,10 @@ function Invoke-RaceSwapProcess([string] $RaceRoot, [string] $Parent, [string] $
     $pwsh = Join-Path $PSHOME 'pwsh.exe'
     $arguments = "$(Quote-ChildArgument $pwsh) -NoProfile -NonInteractive -File $(Quote-ChildArgument $scriptPath) -RaceSwap -SwapParent $(Quote-ChildArgument $Parent) -SwapMoved $(Quote-ChildArgument $Moved) -SwapOutside $(Quote-ChildArgument $Outside) -RaceEvidencePath $(Quote-ChildArgument $raceEvidencePath)"
     $exitCode = [XyvaAclNative]::RunProcessWithLogon($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot)
-    if ($exitCode -ne 0 -or -not (Test-Path -LiteralPath $raceEvidencePath)) { throw "Race attacker process failed: exit=$exitCode" }
+    if ($exitCode -ne 0 -or -not (Test-Path -LiteralPath $raceEvidencePath)) {
+      $childFailure = if (Test-Path -LiteralPath $raceEvidencePath) { (Get-Content -LiteralPath $raceEvidencePath -Raw).Trim() } else { 'evidence-missing' }
+      throw "Race attacker process failed: exit=$exitCode evidence=$childFailure"
+    }
     $evidence = Get-Content -LiteralPath $raceEvidencePath -Raw | ConvertFrom-Json
     if ($evidence.ExitCode -ne 0 -or $evidence.Pid -eq $PID -or $evidence.Sid -eq (Get-CurrentSid) -or $evidence.Administrator -or -not $evidence.Swapped) { throw 'Race attacker evidence validation failed' }
     return $evidence
