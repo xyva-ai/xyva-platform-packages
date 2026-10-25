@@ -28,12 +28,16 @@ jobs:
             'unprivileged-separate-process-access-controls',
             'race-unexpected-error-fails-closed',
             'deterministic-parent-swap-race-rejection',
-            'deterministic-directory-parent-swap-race-rejection'
+            'deterministic-directory-parent-swap-race-rejection',
+            'timeout-fault-injection-termination',
+            'timeout-termination-failure-fails-closed',
+            'cleanup-after-injected-verification-failure'
           )
           foreach ($name in $required) {
             $result = @($evidence.Results | Where-Object Requirement -eq $name)
             if ($result.Count -ne 1 -or $result[0].Status -ne 'PASS') { throw "Required evidence is not PASS: $name" }
           }
+          if ($null -eq $evidence.Platform -or [string]::IsNullOrEmpty($evidence.Platform.OS) -or [string]::IsNullOrEmpty($evidence.Platform.ProcessArchitecture) -or [string]::IsNullOrEmpty($evidence.Platform.DeviceType)) { throw 'Platform evidence is incomplete' }
           if ($null -eq $evidence.SecondProcessEvidence -or $evidence.SecondProcessEvidence.ExitCode -ne 0 -or $evidence.SecondProcessEvidence.Pid -eq $evidence.SecondProcessEvidence.ParentPid -or $evidence.SecondProcessEvidence.Sid -ne $evidence.SecondProcessEvidence.ExpectedSid -or -not $evidence.SecondProcessEvidence.Cleanup) { throw 'Second-process evidence is incomplete' }
           foreach ($race in @($evidence.RaceEvidence, $evidence.DirectoryRaceEvidence)) {
             if ($null -eq $race -or -not $race.HookReached -or -not $race.BarrierReached -or [string]::IsNullOrEmpty($race.SwapPerformedBySid) -or -not $race.AttackerCleanup -or -not $race.ExternalUnchanged -or -not $race.Cleanup) { throw 'Race evidence is incomplete' }

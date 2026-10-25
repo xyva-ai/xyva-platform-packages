@@ -12,7 +12,9 @@ param(
   [string] $SwapParent,
   [string] $SwapMoved,
   [string] $SwapOutside,
-  [string] $RaceEvidencePath
+  [string] $RaceEvidencePath,
+  [switch] $TimeoutProbe,
+  [string] $TimeoutMarkerPath
 )
 
 . "$PSScriptRoot/WindowsAclProof.ps1"
@@ -23,6 +25,7 @@ $results = [System.Collections.Generic.List[object]]::new()
 $script:RaceEvidence = $null
 $script:DirectoryRaceEvidence = $null
 $script:SecondProcessEvidence = $null
+$platform = $null
 
 function Add-Result([string] $Name, [string] $Status, [string] $Detail) {
   $results.Add([pscustomobject]@{ Requirement = $Name; Status = $Status; Detail = $Detail })
@@ -148,14 +151,39 @@ function Quote-ChildArgument([string] $Value) {
   return '"' + $Value + '"'
 }
 
-function Assert-LocalUserAbsent([string] $Name) {
-  try {
-    $existing = Get-LocalUser -Name $Name -ErrorAction Stop
-  } catch {
-    if ($_.Exception.Message -match '(?i)not found|cannot find|does not exist') { return }
-    throw
+function Assert-LocalUserAbsent([string] $Name, [string] $ExpectedSid) {
+  $users = @(Get-LocalUser -ErrorAction Stop)
+  $match = @($users | Where-Object { $_.Name -ceq $Name })
+  if ($match.Count -ne 0) { throw "Disposable account still exists: $Name" }
+  if (-not [string]::IsNullOrEmpty($ExpectedSid) -and @($users | Where-Object { $_.SID.Value -eq $ExpectedSid }).Count -ne 0) { throw "Disposable account SID still exists: $ExpectedSid" }
+  return $true
+}
+
+function Assert-TimeoutEvidence($Evidence) {
+  if ($null -eq $Evidence -or -not $Evidence.TimeoutObserved -or -not $Evidence.Terminated -or $Evidence.ExitCode -ne 124 -or -not $Evidence.HandlesClosed) { throw 'Timeout evidence was incomplete or not fail-closed' }
+}
+
+function Get-PlatformEvidence {
+  if (-not $IsWindows) { return [pscustomobject]@{ OS = [Environment]::OSVersion.VersionString; Caption = $null; Build = $null; OSArchitecture = $null; ProcessArchitecture = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE'); DeviceType = 'non-windows-host' } }
+  $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+  $computer = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+  $caption = [string]$os.Caption
+  $deviceType = if ($env:GITHUB_ACTIONS -eq 'true') { 'github-hosted-vm' } elseif ($computer.Model -match 'Virtual|VMware|VirtualBox|KVM|Hyper-V') { 'vm' } else { 'physical-or-unknown' }
+  [pscustomobject]@{
+    OS = [Environment]::OSVersion.VersionString
+    Caption = $caption
+    Build = [string]$os.BuildNumber
+    OSArchitecture = [string]$os.OSArchitecture
+    ProcessArchitecture = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITEW6432') ?? [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE')
+    DeviceType = $deviceType
   }
-  if ($null -ne $existing) { throw "Disposable account still exists: $Name" }
+}
+
+if ($TimeoutProbe) {
+  if ([string]::IsNullOrEmpty($TimeoutMarkerPath)) { exit 77 }
+  [IO.File]::WriteAllText($TimeoutMarkerPath, ([Diagnostics.Process]::GetCurrentProcess().Id).ToString())
+  Start-Sleep -Seconds 30
+  exit 0
 }
 
 if ($ChildProbe) {
@@ -246,7 +274,7 @@ function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirec
     if ($null -ne $token) { $token.Dispose() }
     if ($null -ne $user) {
       Remove-LocalUser -Name $name -ErrorAction Stop
-      Assert-LocalUserAbsent $name
+      Assert-LocalUserAbsent $name $user.SID.Value
     }
     $cleanupVerified = $true
   }
@@ -279,13 +307,66 @@ function Invoke-RaceSwapProcess([string] $RaceRoot, [string] $Parent, [string] $
   } finally {
     if ($null -ne $user) {
       Remove-LocalUser -Name $name -ErrorAction Stop
-      Assert-LocalUserAbsent $name
+      Assert-LocalUserAbsent $name $user.SID.Value
     }
     $cleanupVerified = $true
   }
   if (-not $cleanupVerified -or $null -eq $evidence) { throw 'Race attacker cleanup was not verified' }
   $evidence | Add-Member -Force -NotePropertyName Cleanup -NotePropertyValue $true
   return $evidence
+}
+
+function Test-TimeoutFaultInjection {
+  $name = "xyva-timeout-" + [guid]::NewGuid().ToString('N').Substring(0, 10)
+  $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
+  $user = $null
+  $marker = Join-Path $root 'timeout-child.pid'
+  $timeoutEvidence = [ordered]@{ TimeoutObserved = $false; Terminated = $false; ExitCode = $null; HandlesClosed = $false; ChildPid = $null }
+  try {
+    $user = New-LocalUser -Name $name -Password $password -AccountNeverExpires -ErrorAction Stop
+    $scriptPath = $PSCommandPath
+    $pwsh = Join-Path $PSHOME 'pwsh.exe'
+    $arguments = "$(Quote-ChildArgument $pwsh) -NoProfile -NonInteractive -File $(Quote-ChildArgument $scriptPath) -TimeoutProbe -TimeoutMarkerPath $(Quote-ChildArgument $marker)"
+    try {
+      [XyvaAclNative]::RunProcessWithLogon($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot, 500)
+      throw 'Timeout probe unexpectedly completed'
+    } catch [TimeoutException] {
+      $timeoutEvidence.TimeoutObserved = $true
+      if ($_.Exception.Message -notmatch 'pid=(\d+);terminated=true;exitCode=(\d+)') { throw 'Timeout termination evidence was malformed' }
+      $timeoutEvidence.ChildPid = [int]$Matches[1]
+      $timeoutEvidence.ExitCode = [int]$Matches[2]
+      $timeoutEvidence.Terminated = $true
+      $timeoutEvidence.HandlesClosed = $true
+    }
+    if (-not (Test-Path -LiteralPath $marker)) { throw 'Timeout child did not reach its start marker' }
+    try { Get-Process -Id $timeoutEvidence.ChildPid -ErrorAction Stop | Out-Null; throw 'Timed-out child is still running' } catch { if ($_.Exception.Message -eq 'Timed-out child is still running') { throw } }
+    Assert-TimeoutEvidence ([pscustomobject]$timeoutEvidence)
+    Add-Result 'timeout-fault-injection-termination' 'PASS' "pid=$($timeoutEvidence.ChildPid);exitCode=$($timeoutEvidence.ExitCode);handlesClosed=true"
+  } finally {
+    if ($null -ne $user) {
+      Remove-LocalUser -Name $name -ErrorAction Stop
+      Assert-LocalUserAbsent $name $user.SID.Value
+    }
+    if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force -ErrorAction Stop }
+  }
+}
+
+function Test-CleanupAfterInjectedFailure {
+  $name = "xyva-cleanup-fault-" + [guid]::NewGuid().ToString('N').Substring(0, 10)
+  $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
+  $user = $null
+  $injected = $false
+  try {
+    $user = New-LocalUser -Name $name -Password $password -AccountNeverExpires -ErrorAction Stop
+    try { throw 'injected-verification-failure' } catch { $injected = $_.Exception.Message -eq 'injected-verification-failure' }
+    if (-not $injected) { throw 'Cleanup fault injection did not execute' }
+  } finally {
+    if ($null -ne $user) {
+      Remove-LocalUser -Name $name -ErrorAction Stop
+      Assert-LocalUserAbsent $name $user.SID.Value
+    }
+  }
+  Add-Result 'cleanup-after-injected-verification-failure' 'PASS' 'temporary account removed and absence verified after injected failure'
 }
 
 function Assert-RaceEvidence($State, [string] $Moved, [string] $Leaf) {
@@ -299,6 +380,17 @@ function Assert-RaceEvidence($State, [string] $Moved, [string] $Leaf) {
 }
 
 try {
+  $platform = Get-PlatformEvidence
+  if ($platform.Caption -match '^Microsoft Windows 11' -and $platform.OSArchitecture -match '64' -and $platform.ProcessArchitecture -match 'AMD64') {
+    Add-Result 'windows-11-device-identity' 'PASS' "caption=$($platform.Caption);build=$($platform.Build);osArchitecture=$($platform.OSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
+  } else {
+    Add-Result 'windows-11-device-identity' 'NOT_EXECUTED' "caption=$($platform.Caption);build=$($platform.Build);osArchitecture=$($platform.OSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
+  }
+  if ($platform.Caption -match '^Microsoft Windows 11' -and $platform.OSArchitecture -match 'ARM64' -and $platform.ProcessArchitecture -match 'ARM64') {
+    Add-Result 'windows-11-arm64-native-identity' 'PASS' "caption=$($platform.Caption);build=$($platform.Build);osArchitecture=$($platform.OSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
+  } else {
+    Add-Result 'windows-11-arm64-native-identity' 'NOT_EXECUTED' "caption=$($platform.Caption);build=$($platform.Build);osArchitecture=$($platform.OSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
+  }
   $rootCreation = $null
   Invoke-RequiredTest 'private-directory-create' { $script:rootCreation = New-PrivateDirectory $root }
   Invoke-RequiredTest 'directory-handle-bound-acl' { Assert-PrivateAclEvidence $rootCreation.Evidence (Get-CurrentSid) $true | Out-Null }
@@ -362,6 +454,12 @@ try {
   Invoke-NativeMalformedDaclFixture 'null'
   Invoke-NativeMalformedDaclFixture 'empty'
   Add-Result 'native-missing-dacl-file' 'NOT_EXECUTED' 'object=file; NTFS-associated object descriptors retain SE_DACL_PRESENT, so a missing-DACL state cannot be independently established on this fixture without simulating evidence'
+  Invoke-RequiredTest 'timeout-fault-injection-termination' { Test-TimeoutFaultInjection }
+  Invoke-RequiredTest 'timeout-termination-failure-fails-closed' {
+    $fake = [pscustomobject]@{ TimeoutObserved = $true; Terminated = $false; ExitCode = 124; HandlesClosed = $true }
+    try { Assert-TimeoutEvidence $fake; throw 'Failed termination confirmation was accepted' } catch { if ($_.Exception.Message -notlike '*incomplete or not fail-closed*') { throw } }
+  }
+  Invoke-RequiredTest 'cleanup-after-injected-verification-failure' { Test-CleanupAfterInjectedFailure }
   Invoke-RequiredTest 'parent-chain-reparse-rejection' {
     $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-outside-" + [guid]::NewGuid())
     [IO.Directory]::CreateDirectory($outside) | Out-Null
@@ -501,11 +599,12 @@ try {
   if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
   if ($null -ne $accessRoot -and (Test-Path -LiteralPath $accessRoot)) { Remove-Item -LiteralPath $accessRoot -Recurse -Force }
   $evidence = [pscustomobject]@{
-    Schema = 'xyva.windows-acl-poc.v2'
+    Schema = 'xyva.windows-acl-poc.v3'
     Commit = (git rev-parse HEAD).Trim()
     OS = [Environment]::OSVersion.VersionString
     PowerShell = $PSVersionTable.PSVersion.ToString()
     RunnerOS = $env:RUNNER_OS
+    Platform = $platform
     Results = @($results)
     SecondProcessEvidence = $script:SecondProcessEvidence
     RaceEvidence = $script:RaceEvidence

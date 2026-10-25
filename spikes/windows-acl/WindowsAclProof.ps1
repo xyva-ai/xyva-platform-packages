@@ -161,21 +161,26 @@ public static class XyvaAclNative {
       throw new Win32Exception(Marshal.GetLastWin32Error());
     return token;
   }
-  public static int RunProcessWithLogon(string username, string domain, string password, string application, string commandLine, string currentDirectory) {
+  public static int RunProcessWithLogon(string username, string domain, string password, string application, string commandLine, string currentDirectory, uint timeoutMilliseconds) {
     STARTUPINFO startup = new STARTUPINFO(); startup.cb = Marshal.SizeOf(typeof(STARTUPINFO)); PROCESS_INFORMATION process;
     StringBuilder mutableCommandLine = new StringBuilder(commandLine);
     if (!CreateProcessWithLogonW(username, domain, password, 1, application, mutableCommandLine, 0x08000000, IntPtr.Zero, currentDirectory, ref startup, out process)) throw new Win32Exception(Marshal.GetLastWin32Error());
     try {
-      uint wait = WaitForSingleObject(process.hProcess, 30000);
+      uint wait = WaitForSingleObject(process.hProcess, timeoutMilliseconds);
       if (wait == 0x00000102) {
         if (!TerminateProcess(process.hProcess, 124)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        if (WaitForSingleObject(process.hProcess, 5000) != 0) throw new TimeoutException("Second-process probe did not terminate after timeout");
-        throw new TimeoutException("Second-process probe timed out and was terminated");
+        uint terminatedWait = WaitForSingleObject(process.hProcess, 5000);
+        if (terminatedWait != 0) throw new TimeoutException(String.Format("pid={0};terminated=false;wait={1}", process.dwProcessId, terminatedWait));
+        uint terminatedExitCode; if (!GetExitCodeProcess(process.hProcess, out terminatedExitCode)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        throw new TimeoutException(String.Format("pid={0};terminated=true;exitCode={1}", process.dwProcessId, terminatedExitCode));
       }
       if (wait != 0) throw new Win32Exception((int)wait);
       uint exitCode; if (!GetExitCodeProcess(process.hProcess, out exitCode)) throw new Win32Exception(Marshal.GetLastWin32Error()); return unchecked((int)exitCode);
     }
     finally { if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread); if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess); }
+  }
+  public static int RunProcessWithLogon(string username, string domain, string password, string application, string commandLine, string currentDirectory) {
+    return RunProcessWithLogon(username, domain, password, application, commandLine, currentDirectory, 30000);
   }
   static void ThrowNtStatus(int status) { throw new Win32Exception((int)RtlNtStatusToDosError(status)); }
   static IntPtr OpenRelative(IntPtr root, string component, uint desiredAccess, uint createDisposition, uint createOptions, IntPtr securityDescriptor) {
