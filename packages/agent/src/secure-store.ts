@@ -178,7 +178,19 @@ function getMasterKey(): Buffer {
     return existing
   }
 
+  for (const fileName of ['credentials.json', 'config.json']) {
+    const raw = readPrivateFile(path.join(getSecureDataRoot(), fileName))
+    if (raw?.includes(SEALED_PREFIX)) {
+      throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key is missing while sealed data exists.')
+    }
+  }
   return createMasterKey()
+}
+
+function getExistingMasterKeyForUnseal(): Buffer {
+  const existing = readMasterKey()
+  if (existing) return existing
+  throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key is missing for sealed data.')
 }
 
 export function isSealedSecret(value: string): boolean {
@@ -207,7 +219,7 @@ export function unsealSecret(value: string, context: string): string | null {
 
   try {
     const [iv, tag, encrypted] = parts
-    const decipher = crypto.createDecipheriv('aes-256-gcm', getMasterKey(), Buffer.from(iv, 'base64url'))
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getExistingMasterKeyForUnseal(), Buffer.from(iv, 'base64url'))
     decipher.setAAD(Buffer.from(context, 'utf8'))
     decipher.setAuthTag(Buffer.from(tag, 'base64url'))
     return Buffer.concat([

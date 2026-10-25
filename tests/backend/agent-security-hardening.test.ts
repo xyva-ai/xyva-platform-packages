@@ -240,6 +240,27 @@ describe('agent secret storage', () => {
     expect(() => updateConfig({ port: 7901 })).toThrow(/cannot be decrypted/i)
     expect(fs.readFileSync(configPath, 'utf8')).toBe(corrupted)
   })
+
+  it('never creates a replacement master key for existing sealed data', () => {
+    saveConfig({
+      aiProvider: 'openai',
+      aiApiKeys: { openai: 'synthetic-api-key' },
+      aiDefaultModels: { openai: 'gpt-5' },
+      flowProviderGrants: [],
+      gitlabToken: null,
+      githubToken: null,
+      youtrackToken: null,
+      port: 7900,
+    })
+    const keyPath = xyvaPath('secret-store.key')
+    const configPath = xyvaPath('config.json')
+    const before = fs.readFileSync(configPath, 'utf8')
+    fs.rmSync(keyPath)
+
+    expect(() => loadConfig()).toThrow(/key is missing/i)
+    expect(fs.existsSync(keyPath)).toBe(false)
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(before)
+  })
 })
 
 describe('agent license integrity', () => {
