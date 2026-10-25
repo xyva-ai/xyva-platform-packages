@@ -71,6 +71,10 @@ static bool IsLeaf(const std::wstring& leaf) {
 static bool IsBarrierName(const std::wstring& name) {
   return name.rfind(L"Local\\xyva-secure-store-", 0) == 0 && name.size() <= 240;
 }
+
+static bool AwaitTestBarrier() {
+  return !testBarrier.active() || (SetEvent(testBarrier.reached) && WaitForSingleObject(testBarrier.proceed, 10'000) == WAIT_OBJECT_0);
+}
 #endif
 
 static bool IsNotReparsePoint(HANDLE handle) {
@@ -259,10 +263,8 @@ static napi_value Create(napi_env env, napi_callback_info info, bool directory) 
   PSECURITY_DESCRIPTOR descriptor = PrivateDescriptor();
   if (!descriptor) { Fail(env, "XYVA_SECURITY_DESCRIPTOR_FAILED"); return 0; }
 #ifdef XYVA_TEST_BUILD
-  if (testBarrier.active()) {
-    if (!SetEvent(testBarrier.reached) || WaitForSingleObject(testBarrier.proceed, 10'000) != WAIT_OBJECT_0) {
-      LocalFree(descriptor); Fail(env, "XYVA_TEST_BARRIER_TIMEOUT"); return 0;
-    }
+  if (!AwaitTestBarrier()) {
+    LocalFree(descriptor); Fail(env, "XYVA_TEST_BARRIER_TIMEOUT"); return 0;
   }
 #endif
   HANDLE handle = OpenRelative(root, leaf, XYVA_FILE_CREATE,
@@ -302,6 +304,9 @@ static napi_value ReadPrivateFile(napi_env env, napi_callback_info info) {
   Root* root = count ? GetRoot(env, args[0]) : 0;
   std::wstring leaf;
   if (!root || count != 2 || !String(env, args[1], &leaf) || !IsLeaf(leaf)) { Fail(env, "XYVA_INVALID_INPUT"); return 0; }
+#ifdef XYVA_TEST_BUILD
+  if (!AwaitTestBarrier()) { Fail(env, "XYVA_TEST_BARRIER_TIMEOUT"); return 0; }
+#endif
   HANDLE handle = OpenRelative(root, leaf, XYVA_FILE_OPEN,
     XYVA_FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | XYVA_FILE_NON_DIRECTORY_FILE,
     0, SYNCHRONIZE | GENERIC_READ | READ_CONTROL | FILE_READ_ATTRIBUTES);
@@ -367,6 +372,9 @@ static napi_value DeletePrivateFile(napi_env env, napi_callback_info info) {
   Root* root = count ? GetRoot(env, args[0]) : 0;
   std::wstring leaf;
   if (!root || count != 2 || !String(env, args[1], &leaf) || !IsLeaf(leaf)) { Fail(env, "XYVA_INVALID_INPUT"); return 0; }
+#ifdef XYVA_TEST_BUILD
+  if (!AwaitTestBarrier()) { Fail(env, "XYVA_TEST_BARRIER_TIMEOUT"); return 0; }
+#endif
   HANDLE handle = OpenRelative(root, leaf, XYVA_FILE_OPEN,
     XYVA_FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | XYVA_FILE_NON_DIRECTORY_FILE,
     0, DELETE | SYNCHRONIZE | READ_CONTROL | FILE_READ_ATTRIBUTES);

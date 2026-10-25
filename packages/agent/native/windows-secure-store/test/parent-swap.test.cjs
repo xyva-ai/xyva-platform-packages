@@ -21,6 +21,65 @@ if (process.platform !== 'win32') {
     });
   }
 
+  function swapRoot(root, moved, outside) {
+    execFileSync('pwsh.exe', [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+      'param($root,$moved,$outside) Move-Item -LiteralPath $root -Destination $moved; New-Item -ItemType Junction -Path $root -Target $outside | Out-Null',
+      root, moved, outside,
+    ], { windowsHide: true, timeout: 10_000, stdio: 'pipe' });
+  }
+
+  async function exerciseSwap(operation) {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), `xyva-secure-store-${operation}-swap-`));
+    const root = path.join(base, 'trusted-root');
+    const moved = path.join(base, 'trusted-root-moved');
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(outside);
+    const sentinel = path.join(outside, 'sentinel.txt');
+    fs.writeFileSync(sentinel, 'synthetic-sentinel');
+    const trusted = addon.ensureTrustedRoot(root);
+    addon.createPrivateFile(trusted, 'private.json', Buffer.from('synthetic-only'));
+    const prefix = `Local\\xyva-secure-store-${process.pid}-${Date.now()}-${operation}`;
+    const reached = `${prefix}-reached`;
+    const proceed = `${prefix}-proceed`;
+    const worker = new Worker(`
+      const { parentPort, workerData } = require('node:worker_threads');
+      const addon = require(workerData.addonPath);
+      const root = addon.openTrustedRoot(workerData.root);
+      addon.configureTestBarrier(workerData.reached, workerData.proceed);
+      parentPort.postMessage('ready');
+      try {
+        const result = workerData.operation === 'read'
+          ? addon.readPrivateFile(root, 'private.json').toString('utf8')
+          : (addon.deletePrivateFile(root, 'private.json'), 'deleted');
+        parentPort.postMessage({ result });
+      } catch (error) { parentPort.postMessage({ code: error.code || 'UNKNOWN' }); }
+    `, { eval: true, workerData: { addonPath, root, reached, proceed, operation } });
+
+    let swapped = false;
+    try {
+      assert.equal(await message(worker), 'ready');
+      addon.waitTestBarrier(reached, 10_000);
+      swapRoot(root, moved, outside);
+      swapped = true;
+      addon.signalTestBarrier(proceed);
+      const outcome = await message(worker);
+      assert.deepEqual(outcome, { result: operation === 'read' ? 'synthetic-only' : 'deleted' });
+      assert.equal(fs.existsSync(path.join(outside, 'private.json')), false);
+      assert.equal(fs.readFileSync(sentinel, 'utf8'), 'synthetic-sentinel');
+      assert.equal(fs.existsSync(path.join(moved, 'private.json')), operation === 'read');
+    } finally {
+      try {
+        addon.signalTestBarrier(proceed);
+      } catch (error) {
+        if (error?.code !== 'XYVA_TEST_EVENT_FAILED') throw error;
+      }
+      await worker.terminate();
+      if (swapped) fs.rmdirSync(root);
+      fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  }
+
   test('handle-relative create and replace stay in the opened root across a junction swap', { timeout: 30_000 }, async () => {
     const base = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-secure-store-swap-'));
     const root = path.join(base, 'trusted-root');
@@ -50,11 +109,7 @@ if (process.platform !== 'win32') {
       assert.equal(await message(worker), 'ready');
       addon.waitTestBarrier(reached, 10_000);
       assert.equal(fs.existsSync(root), true);
-      execFileSync('pwsh.exe', [
-        '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-        'param($root,$moved,$outside) Move-Item -LiteralPath $root -Destination $moved; New-Item -ItemType Junction -Path $root -Target $outside | Out-Null',
-        root, moved, outside,
-      ], { windowsHide: true, timeout: 10_000, stdio: 'pipe' });
+      swapRoot(root, moved, outside);
       swapped = true;
       addon.signalTestBarrier(proceed);
       assert.equal(await message(worker), 'ok');
@@ -72,4 +127,7 @@ if (process.platform !== 'win32') {
       fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   });
+
+  test('handle-relative read stays in the opened root across a junction swap', { timeout: 30_000 }, () => exerciseSwap('read'));
+  test('handle-relative delete stays in the opened root across a junction swap', { timeout: 30_000 }, () => exerciseSwap('delete'));
 }
