@@ -89,14 +89,12 @@ static PSECURITY_DESCRIPTOR PrivateDescriptor() {
 static bool ApplyPrivateAcl(HANDLE handle) {
   PSECURITY_DESCRIPTOR descriptor = PrivateDescriptor();
   if (!descriptor) return false;
-  PSID owner = 0;
   PACL dacl = 0;
+  BOOL present = FALSE;
   BOOL defaulted = FALSE;
-  const bool parsed = GetSecurityDescriptorOwner(descriptor, &owner, &defaulted)
-    && GetSecurityDescriptorDacl(descriptor, &defaulted, &dacl, &defaulted)
-    && owner && dacl;
+  const bool parsed = GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) && present && dacl;
   const DWORD result = parsed
-    ? SetSecurityInfo(handle, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, owner, 0, dacl, 0)
+    ? SetSecurityInfo(handle, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, 0, 0, dacl, 0)
     : ERROR_INVALID_SECURITY_DESCR;
   LocalFree(descriptor);
   return result == ERROR_SUCCESS;
@@ -188,7 +186,7 @@ static napi_value EnsureTrustedRoot(napi_env env, napi_callback_info info) {
   bool created = CreateDirectoryW(rootPath.c_str(), 0) != FALSE;
   if (!created && GetLastError() != ERROR_ALREADY_EXISTS) { Fail(env, "XYVA_ROOT_CREATE_FAILED"); return 0; }
   Root* root = new Root();
-  root->handle = CreateFileW(rootPath.c_str(), READ_CONTROL | WRITE_DAC | WRITE_OWNER | FILE_READ_ATTRIBUTES,
+  root->handle = CreateFileW(rootPath.c_str(), READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES,
     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING,
     FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, 0);
   if (root->handle == INVALID_HANDLE_VALUE || !IsNotReparsePoint(root->handle) || (created && !ApplyPrivateAcl(root->handle)) || !HasPrivateAcl(root->handle)) {
