@@ -63,6 +63,34 @@ describe.runIf(process.platform === 'win32' && process.arch === 'x64')('Windows 
     expect(loadConfig()).toMatchObject({ aiApiKeys: { openai: 'synthetic-api-key' }, gitlabToken: 'synthetic-gitlab-token' })
   })
 
+  it('never replaces a missing master key when sealed configuration exists', () => {
+    const state = isolatedState()
+    saveConfig({
+      aiProvider: 'openai',
+      aiApiKeys: { openai: 'synthetic-api-key' },
+      aiDefaultModels: { openai: 'gpt-5' },
+      flowProviderGrants: [],
+      gitlabToken: null,
+      githubToken: null,
+      youtrackToken: null,
+      port: 7900,
+    })
+    const keyPath = path.join(state, 'secret-store.key')
+    const configPath = path.join(state, 'config.json')
+    const before = fs.readFileSync(configPath, 'utf8')
+    fs.rmSync(keyPath)
+
+    expect(() => loadConfig()).toThrow(/key is missing/i)
+    expect(fs.existsSync(keyPath)).toBe(false)
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(before)
+  })
+
+  it('rejects unsafe native leaf names without creating a stream', () => {
+    const state = isolatedState()
+    expect(() => writePrivateFile(path.join(state, 'unsafe:stream'), 'synthetic')).toThrow(/INVALID_INPUT|private/i)
+    expect(fs.existsSync(path.join(state, 'unsafe:stream'))).toBe(false)
+  })
+
   it('fails closed when an existing private root has an invalid ACL', () => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-agent-windows-root-'))
     temporaryDirectories.push(parent)
