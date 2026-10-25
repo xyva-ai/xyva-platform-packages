@@ -402,7 +402,7 @@ try {
   }
   Invoke-RequiredTest 'unprivileged-effective-access-controls' { Test-UnprivilegedIdentity $controlFile $controlDirectory $impersonationPrivateFile $impersonationPrivateDirectory $raceProbeParent }
   Invoke-RequiredTest 'race-unexpected-error-fails-closed' {
-    $unexpected = [pscustomobject]@{ HookReached = $true; BarrierReached = $true; SwapPerformedBySid = 'S-1-5-21-unexpected'; ExternalUnchanged = $true; Cleanup = $true; Result = 'rejected:RuntimeException'; NativeErrorCode = $null }
+    $unexpected = [pscustomobject]@{ HookReached = $true; BarrierReached = $true; SwapPerformedBySid = 'S-1-5-21-unexpected'; AttackerCleanup = $true; ExternalUnchanged = $true; Cleanup = $true; Result = 'rejected:RuntimeException'; NativeErrorCode = $null }
     try { Assert-RaceEvidence $unexpected $root 'unexpected.txt'; throw 'Unexpected race error was accepted' } catch { if ($_.Exception.Message -notlike '*permitted handle-bound create*') { throw } }
   }
   Invoke-RequiredTest 'deterministic-parent-swap-race-rejection' {
