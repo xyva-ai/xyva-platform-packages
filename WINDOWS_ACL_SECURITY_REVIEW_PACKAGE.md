@@ -2,7 +2,7 @@
 
 Status: `INTERNAL_SELF_REVIEW_ONLY`  
 Branch: `codex/windows-acl-security-spike`  
-Letzter codewirksam geprüfter Head: `abc955aab4bfbcaccaabd617440fa1e9295043e8`
+Letzter codewirksam geprüfter Head: `9772376cae552f0b65d078df855f4f571018b67f`
 PR: [#17](https://github.com/xyva-ai/xyva-platform-packages/pull/17)
 
 ## Scope und Threat Model
@@ -43,9 +43,9 @@ nicht durch einen unabhängigen Windows-Security-Reviewer freigegeben.
 
 ## Nachweise
 
-Windows-Server-2025-CI-Run [40219267339](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40219267339):
+Windows-Server-2025-CI-Run [40224827822](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40224827822):
 
-- Evidence-Artefakt `12608647121`, Schema `xyva.windows-acl-poc.v3`, nicht abgelaufen
+- Evidence-Artefakt `12610512957`, Schema `xyva.windows-acl-poc.v3`, nicht abgelaufen
 - 40 `PASS`, 0 `FAIL`, 3 `NOT_EXECUTED`
 - Nicht-Admin-Zweitprozess mit SID-/PID-Nachweis und Kernel-ACCESS_DENIED
 - File- und Directory-Parent-Swap mit Barrieren, externem Sentinel und
@@ -54,8 +54,19 @@ Windows-Server-2025-CI-Run [40219267339](https://github.com/xyva-ai/xyva-platfor
 - Timeout-Termination, Prozess-/Thread-Handle-Cleanup und sprachunabhängige
   lokale Benutzer-/SID-Bereinigung
 - Workflow-Gate akzeptiert nur die drei explizit dokumentierten
-  `NOT_EXECUTED`-Grenzen; zusätzliche, fehlende oder doppelte Evidence wird
-  fail-closed zurückgewiesen
+  `NOT_EXECUTED`-Grenzen und die vollständige feste Requirement-Matrix;
+  zusätzliche, fehlende oder doppelte Evidence wird fail-closed zurückgewiesen
+
+## Automatisierter Zweit-Self-Review
+
+Ein separater KI-Review des isolierten PoC fand keine nachgewiesene
+Vertraulichkeitsumgehung, aber fünf Evidenzlücken: Der getestete Timeoutpfad
+umging die normale Wait-Logik, Handle-Cleanup war nicht fehlerwirksam,
+Reparse-Negativtests akzeptierten beliebige Fehler, die CI-Matrix war nicht
+vollständig festgeschrieben und die x64-Prüfung nutzte Umgebungsvariablen.
+Commit `9772376` behebt diese Punkte; der obige native Windows-Lauf beweist die
+Korrekturen für den Runner. Dieser Review ist zusätzliche automatisierte
+Self-Review-Evidence und ausdrücklich kein unabhängiger menschlicher Review.
 
 ## Missing-DACL-Entscheidung
 

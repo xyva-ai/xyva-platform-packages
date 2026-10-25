@@ -23,11 +23,11 @@ künstlichen PASS-Ergebnisse erzeugt.
 
 - Branch: `codex/windows-acl-security-spike`
 - Letzter codewirksam geprüfter Head:
-  `abc955aab4bfbcaccaabd617440fa1e9295043e8`
+  `9772376cae552f0b65d078df855f4f571018b67f`
 - Draft-PR: [#17](https://github.com/xyva-ai/xyva-platform-packages/pull/17)
-- CI: [Run 40219267339](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40219267339)
-- Artifact: `12608647121`, `windows-acl-evidence-40219267339`, nicht abgelaufen,
-  SHA-256 `a4c8edcddd4e66e56c5df50dfa3f6bacceaba25defb100399b33870e91735525`
+- CI: [Run 40224827822](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40224827822)
+- Artifact: `12610512957`, `windows-acl-evidence-40224827822`, nicht abgelaufen,
+  SHA-256 `eda7e006e0f73568d77f38b0ac7c2c1a8b27dfc026968f1719c4862cf9ac6c07`
 - Matrix: 40 `PASS`, 0 `FAIL`, 3 `NOT_EXECUTED`
 - Geänderte Branch-Dateien: `.github/workflows/windows-acl-poc.yml`,
   `spikes/windows-acl/WindowsAclProof.ps1`,
@@ -55,10 +55,12 @@ objektgebundene Missing-DACL-Fixture. Der produktive Foundation-P0 bleibt
 `OPEN / BLOCKED`.
 
 Der Workflow akzeptiert zusätzlich ausschließlich genau diese drei benannten
-`NOT_EXECUTED`-Einträge. Leere oder doppelte Requirement-Namen, jeder andere
-Nicht-`PASS`-Status und ein fehlender erwarteter Plattformgrenzwert lassen den
-Job fail-closed scheitern. Die Regel wurde lokal gegen das echte Artefakt und
-im Windows-Server-2025-Lauf auf dem obigen Commit geprüft.
+`NOT_EXECUTED`-Einträge und eine vollständige, fest benannte Matrix aller 43
+Requirements. Leere, doppelte, fehlende oder zusätzliche Requirement-Namen,
+jeder andere Nicht-`PASS`-Status, ein Harness-Exit ungleich null und eine nicht
+nativ-x64/NTFS-gebundene Plattform-Evidence lassen den Job fail-closed
+scheitern. Die Regel wurde lokal und im Windows-Server-2025-Lauf auf dem
+obigen Commit geprüft.
 
 ## E. Missing-DACL-Entscheidungsvorlage
 
