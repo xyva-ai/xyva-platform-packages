@@ -77,8 +77,9 @@ Eine ausdrücklich freigegebene isolierte Windows-11-x64-Testmaschine (physisch
 oder VM) bereitstellen und dort den vorhandenen Harness ausführen:
 
 ```powershell
-pwsh -NoProfile -NonInteractive -File .\spikes\windows-acl\WindowsAclProof.Tests.ps1 `
-  -EvidencePath .\evidence\windows-acl-evidence.json
+pwsh -NoProfile -NonInteractive -File .\spikes\windows-acl\Invoke-Windows11AclAcceptance.ps1 `
+  -ExpectedCommit (git rev-parse HEAD) `
+  -EvidencePath .\evidence\windows11-acl-evidence.json
 ```
 
 Danach müssen OS/Build/Architektur/Gerätetyp, SHA und Evidence unabhängig
