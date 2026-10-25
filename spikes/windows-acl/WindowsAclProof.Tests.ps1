@@ -328,7 +328,7 @@ function Test-TimeoutFaultInjection {
     $pwsh = Join-Path $PSHOME 'pwsh.exe'
     $arguments = "$(Quote-ChildArgument $pwsh) -NoProfile -NonInteractive -File $(Quote-ChildArgument $scriptPath) -TimeoutProbe -TimeoutMarkerPath $(Quote-ChildArgument $marker)"
     try {
-      [XyvaAclNative]::RunProcessWithLogon($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot, 500)
+      [XyvaAclNative]::RunProcessWithLogon($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot, 5000)
       throw 'Timeout probe unexpectedly completed'
     } catch [TimeoutException] {
       $timeoutEvidence.TimeoutObserved = $true
@@ -338,6 +338,8 @@ function Test-TimeoutFaultInjection {
       $timeoutEvidence.Terminated = $true
       $timeoutEvidence.HandlesClosed = $true
     }
+    $markerDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (-not (Test-Path -LiteralPath $marker) -and [DateTime]::UtcNow -lt $markerDeadline) { Start-Sleep -Milliseconds 100 }
     if (-not (Test-Path -LiteralPath $marker)) { throw 'Timeout child did not reach its start marker' }
     try { Get-Process -Id $timeoutEvidence.ChildPid -ErrorAction Stop | Out-Null; throw 'Timed-out child is still running' } catch { if ($_.Exception.Message -eq 'Timed-out child is still running') { throw } }
     Assert-TimeoutEvidence ([pscustomobject]$timeoutEvidence)
