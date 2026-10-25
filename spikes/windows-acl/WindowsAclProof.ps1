@@ -189,7 +189,8 @@ public static class XyvaAclNative {
     if (!CreateProcessWithLogonW(username, domain, password, 1, application, mutableCommandLine, 0x08000000, IntPtr.Zero, currentDirectory, ref startup, out process)) throw new Win32Exception(Marshal.GetLastWin32Error());
     try {
       Thread.Sleep(checked((int)timeoutMilliseconds));
-      if (WaitForSingleObject(process.hProcess, 0) == 0) throw new TimeoutException(String.Format("pid={0};terminated=false;already-exited", process.dwProcessId));
+      uint beforeExitCode; if (!GetExitCodeProcess(process.hProcess, out beforeExitCode)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      if (beforeExitCode != 259) throw new TimeoutException(String.Format("pid={0};terminated=false;already-exited;exitCode={1}", process.dwProcessId, beforeExitCode));
       if (!TerminateProcess(process.hProcess, 124)) throw new Win32Exception(Marshal.GetLastWin32Error());
       uint terminatedWait = WaitForSingleObject(process.hProcess, 5000);
       if (terminatedWait != 0) throw new TimeoutException(String.Format("pid={0};terminated=false;wait={1}", process.dwProcessId, terminatedWait));
