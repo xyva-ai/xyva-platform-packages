@@ -320,13 +320,13 @@ function Test-TimeoutFaultInjection {
   $name = "xyva-to-" + [guid]::NewGuid().ToString('N').Substring(0, 10)
   $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
   $user = $null
-  $marker = Join-Path $root 'timeout-child.pid'
+  $probeScript = Join-Path $root 'timeout-probe.ps1'
   $timeoutEvidence = [ordered]@{ TimeoutObserved = $false; Terminated = $false; ExitCode = $null; HandlesClosed = $false; ChildPid = $null }
   try {
     $user = New-LocalUser -Name $name -Password $password -AccountNeverExpires -ErrorAction Stop
-    $scriptPath = $PSCommandPath
+    Set-Content -LiteralPath $probeScript -Value 'while ($true) { [Threading.Thread]::Sleep(1000) }' -Encoding utf8NoBOM
     $pwsh = Join-Path $PSHOME 'pwsh.exe'
-    $arguments = "$(Quote-ChildArgument $pwsh) -NoProfile -NonInteractive -File $(Quote-ChildArgument $scriptPath) -TimeoutProbe -TimeoutMarkerPath $(Quote-ChildArgument $marker)"
+    $arguments = "$(Quote-ChildArgument $pwsh) -NoProfile -NonInteractive -File $(Quote-ChildArgument $probeScript)"
     try {
       [XyvaAclNative]::RunProcessWithLogonTimeout($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $pwsh, $arguments, $env:SystemRoot, 5000)
       throw 'Timeout probe unexpectedly completed'
@@ -338,9 +338,6 @@ function Test-TimeoutFaultInjection {
       $timeoutEvidence.Terminated = $true
       $timeoutEvidence.HandlesClosed = $true
     }
-    $markerDeadline = [DateTime]::UtcNow.AddSeconds(10)
-    while (-not (Test-Path -LiteralPath $marker) -and [DateTime]::UtcNow -lt $markerDeadline) { Start-Sleep -Milliseconds 100 }
-    if (-not (Test-Path -LiteralPath $marker)) { throw 'Timeout child did not reach its start marker' }
     try { Get-Process -Id $timeoutEvidence.ChildPid -ErrorAction Stop | Out-Null; throw 'Timed-out child is still running' } catch { if ($_.Exception.Message -eq 'Timed-out child is still running') { throw } }
     Assert-TimeoutEvidence ([pscustomobject]$timeoutEvidence)
     Add-Result 'timeout-fault-injection-termination' 'PASS' "pid=$($timeoutEvidence.ChildPid);exitCode=$($timeoutEvidence.ExitCode);handlesClosed=true"
@@ -349,7 +346,7 @@ function Test-TimeoutFaultInjection {
       Remove-LocalUser -Name $name -ErrorAction Stop
       Assert-LocalUserAbsent $name $user.SID.Value
     }
-    if (Test-Path -LiteralPath $marker) { Remove-Item -LiteralPath $marker -Force -ErrorAction Stop }
+    if (Test-Path -LiteralPath $probeScript) { Remove-Item -LiteralPath $probeScript -Force -ErrorAction Stop }
   }
 }
 
