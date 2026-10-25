@@ -11,17 +11,22 @@ Produktive Integration: `NOT_EXECUTED`
 
 Die ausführbaren isolierten ACL-/Prozess-/Race-/Cleanup-Prüfungen sind auf
 GitHub-hosted Windows Server 2025 erfolgreich. Der Timeout-Fehlerpfad und die
-sprachunabhängige Kontenbereinigung wurden ergänzt. Windows 11 x64, native
-ARM64, ein unabhängiger Security-Review und die produktive Foundation bleiben
-offen. Es wurden keine künstlichen PASS-Ergebnisse erzeugt.
+sprachunabhängige Kontenbereinigung wurden ergänzt. Ein vorhandener
+Windows-11-Proxmox-Bestand ist keine Abnahmefreigabe: Die read-only-Prüfung
+ergab für die verfügbaren Testkandidaten ein Runbook-`NO-START` wegen fehlender
+Kapazität und unvollständiger Isolationsnachweise; die laufende Quell-VM wurde
+nicht verändert. Windows 11 x64, native ARM64, ein unabhängiger
+Security-Review und die produktive Foundation bleiben offen. Es wurden keine
+künstlichen PASS-Ergebnisse erzeugt.
 
 ## B. Technischer Status
 
 - Branch: `codex/windows-acl-security-spike`
-- Head: `33d0939628eed23aca2800cbf153eaa1480769b8`
+- Letzter codewirksam geprüfter Head:
+  `311224e7fcee155d17ab28618840ac1cc66e666c`
 - Draft-PR: [#17](https://github.com/xyva-ai/xyva-platform-packages/pull/17)
-- CI: [Run 40194432687](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40194432687)
-- Artifact: `12599532087`, `windows-acl-evidence-40194432687`
+- CI: [Run 40218421133](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40218421133)
+- Artifact: `12607549682`, `windows-acl-evidence-40218421133`, nicht abgelaufen
 - Matrix: 40 `PASS`, 0 `FAIL`, 3 `NOT_EXECUTED`
 - Geänderte Branch-Dateien: `.github/workflows/windows-acl-poc.yml`,
   `spikes/windows-acl/WindowsAclProof.ps1`,
@@ -33,7 +38,7 @@ offen. Es wurden keine künstlichen PASS-Ergebnisse erzeugt.
 | Plattform | Ergebnis | Begründung |
 | --- | --- | --- |
 | Windows Server 2025 x64 | PASS | Native CI, Build 26100, PowerShell 7.6.7 |
-| Windows 11 x64 | NOT_EXECUTED | Kein autorisierter Windows-11-Host verfügbar |
+| Windows 11 x64 | NOT_EXECUTED | Bestandener Proxmox-Host, aber kein Runbook-konformer Start: Kapazitäts- und Isolations-Gates fehlen; Quell-VM blieb tabu |
 | Windows 11 ARM64 nativ | NOT_EXECUTED | Keine freigegebene ARM64-Umgebung |
 | macOS lokal | NOT_EXECUTED | Windows-Security-APIs nicht verfügbar |
 
@@ -71,10 +76,13 @@ Er behandelt atomare Erstellung, handle-relative Pfade, Migration,
 Rollback, Replace-Recovery, Plattformregressionen und verpflichtende Gates.
 Produktive Dateien, PR #16 und `secure-store.ts` wurden nicht geändert.
 
-## H. Nächste unvermeidbare Benutzeraktion
+## H. Nächste unvermeidbare Freigabe
 
-Eine ausdrücklich freigegebene isolierte Windows-11-x64-Testmaschine (physisch
-oder VM) bereitstellen und dort den vorhandenen Harness ausführen:
+Zuerst müssen die dokumentierten Proxmox-Startgates erfüllt und ein bereits
+sanitisierter, isolierter Windows-11-x64-Testgast namentlich freigegeben sein.
+Die Details stehen bewusst ohne Infrastrukturkennungen in
+[`PROXMOX_WINDOWS11_PREFLIGHT.md`](PROXMOX_WINDOWS11_PREFLIGHT.md). Erst dann
+darf dort der vorhandene Harness ausgeführt werden:
 
 ```powershell
 pwsh -NoProfile -NonInteractive -File .\spikes\windows-acl\Invoke-Windows11AclAcceptance.ps1 `
@@ -84,6 +92,12 @@ pwsh -NoProfile -NonInteractive -File .\spikes\windows-acl\Invoke-Windows11AclAc
 
 Danach müssen OS/Build/Architektur/Gerätetyp, SHA und Evidence unabhängig
 geprüft werden. Für native ARM64 ist eine separate native Umgebung nötig.
+
+Für PR #17 ist zudem noch kein unabhängiger Review angefordert oder eingereicht.
+Die verfügbare read-only-GitHub-Abfrage bestätigte nicht die behauptete dritte
+Reviewidentität. Ein namentlich benannter, unabhängiger Account mit Zugriff muss
+die Prüfung anfordern und als Review dokumentieren; die bisherigen Nachweise
+bleiben bis dahin `INTERNAL_SELF_REVIEW_ONLY`.
 
 Kein Merge, keine produktive Integration, kein Deployment, Release oder
 Publishing ohne unabhängige Prüfung und erneute ausdrückliche Freigabe.

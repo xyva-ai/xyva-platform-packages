@@ -2,7 +2,7 @@
 
 Status: `INTERNAL_SELF_REVIEW_ONLY`  
 Branch: `codex/windows-acl-security-spike`  
-Head: `33d0939628eed23aca2800cbf153eaa1480769b8`  
+Letzter codewirksam geprüfter Head: `311224e7fcee155d17ab28618840ac1cc66e666c`  
 PR: [#17](https://github.com/xyva-ai/xyva-platform-packages/pull/17)
 
 ## Scope und Threat Model
@@ -43,9 +43,9 @@ nicht durch einen unabhängigen Windows-Security-Reviewer freigegeben.
 
 ## Nachweise
 
-Windows-Server-2025-CI-Run [40192896236](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40192896236):
+Windows-Server-2025-CI-Run [40218421133](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40218421133):
 
-- Evidence-Artefakt `12598447792`, Schema `xyva.windows-acl-poc.v3`
+- Evidence-Artefakt `12607549682`, Schema `xyva.windows-acl-poc.v3`, nicht abgelaufen
 - 40 `PASS`, 0 `FAIL`, 3 `NOT_EXECUTED`
 - Nicht-Admin-Zweitprozess mit SID-/PID-Nachweis und Kernel-ACCESS_DENIED
 - File- und Directory-Parent-Swap mit Barrieren, externem Sentinel und
@@ -85,5 +85,7 @@ separater Windows-API-/Objekttyp-PoC erforderlich ist.
 ## Review-Grenze
 
 Dies ist ein interner Self-Review desselben Arbeitsstrangs. `INDEPENDENT_REVIEW_APPROVED`
-ist nicht gesetzt. Der PoC ist kein produktiver Secure-Store und erteilt keine
+ist nicht gesetzt. Für PR #17 ist kein unabhängiger Review angefordert oder
+eingereicht; die verfügbare read-only-GitHub-Abfrage bestätigte keine dritte
+Reviewidentität. Der PoC ist kein produktiver Secure-Store und erteilt keine
 Credential-, Provider-, Merge-, Release- oder Deployment-Freigabe.
