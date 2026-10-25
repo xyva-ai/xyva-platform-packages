@@ -42,6 +42,7 @@ jobs:
           npm run build --workspace @xyva/agent
           $env:XYVA_EVIDENCE_DIR = (New-Item -ItemType Directory evidence -Force).FullName
           npx vitest run -c vitest.public.config.ts tests/backend/agent-windows-secure-store.test.ts
+          node --expose-gc packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
           $binary = 'packages/agent/dist/native/win32-x64/xyva_windows_secure_store.node'
           if (-not (Test-Path -LiteralPath $binary)) { throw 'Native package binary missing' }
           @{ sha=(git rev-parse HEAD); node=(node --version); npm=(npm --version); architecture=$env:PROCESSOR_ARCHITECTURE; runner=$env:ImageOS; imageVersion=$env:ImageVersion; binarySha=(Get-FileHash -Algorithm SHA256 $binary).Hash; tests='agent-windows-secure-store' } | ConvertTo-Json | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM
@@ -70,6 +71,7 @@ jobs:
         shell: pwsh
         run: |
           npx vitest run -c vitest.public.config.ts tests/backend/agent-windows-secure-store.test.ts
+          node --expose-gc packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
           $evidence = Get-Content evidence/windows-secure-store-integration.json -Raw | ConvertFrom-Json
           $evidence | Add-Member -NotePropertyName node24 -NotePropertyValue (node --version)
           $evidence | ConvertTo-Json | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM

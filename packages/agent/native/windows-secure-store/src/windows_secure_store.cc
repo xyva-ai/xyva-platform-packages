@@ -35,6 +35,16 @@ struct Root {
   ~Root() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
 };
 
+#ifdef XYVA_TEST_BUILD
+struct Barrier {
+  HANDLE reached = 0;
+  HANDLE proceed = 0;
+  ~Barrier() { if (reached) CloseHandle(reached); if (proceed) CloseHandle(proceed); }
+  bool active() const { return reached && proceed; }
+};
+static Barrier testBarrier;
+#endif
+
 static void Fail(napi_env env, const char* code) {
   napi_value message, error, value;
   napi_create_string_utf8(env, code, NAPI_AUTO_LENGTH, &message);
@@ -56,6 +66,12 @@ static bool String(napi_env env, napi_value value, std::wstring* output) {
 static bool IsLeaf(const std::wstring& leaf) {
   return !leaf.empty() && leaf != L"." && leaf != L".." && leaf.find_first_of(L"\\/:") == std::wstring::npos;
 }
+
+#ifdef XYVA_TEST_BUILD
+static bool IsBarrierName(const std::wstring& name) {
+  return name.rfind(L"Local\\xyva-secure-store-", 0) == 0 && name.size() <= 240;
+}
+#endif
 
 static bool IsNotReparsePoint(HANDLE handle) {
   FILE_ATTRIBUTE_TAG_INFO info{};
@@ -242,6 +258,13 @@ static napi_value Create(napi_env env, napi_callback_info info, bool directory) 
   }
   PSECURITY_DESCRIPTOR descriptor = PrivateDescriptor();
   if (!descriptor) { Fail(env, "XYVA_SECURITY_DESCRIPTOR_FAILED"); return 0; }
+#ifdef XYVA_TEST_BUILD
+  if (testBarrier.active()) {
+    if (!SetEvent(testBarrier.reached) || WaitForSingleObject(testBarrier.proceed, 10'000) != WAIT_OBJECT_0) {
+      LocalFree(descriptor); Fail(env, "XYVA_TEST_BARRIER_TIMEOUT"); return 0;
+    }
+  }
+#endif
   HANDLE handle = OpenRelative(root, leaf, XYVA_FILE_CREATE,
     XYVA_FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | (directory ? XYVA_FILE_DIRECTORY_FILE : XYVA_FILE_NON_DIRECTORY_FILE),
     descriptor, directory ? (SYNCHRONIZE | READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES) : (SYNCHRONIZE | GENERIC_WRITE | READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES));
@@ -357,6 +380,53 @@ static napi_value DeletePrivateFile(napi_env env, napi_callback_info info) {
   napi_value undefined; napi_get_undefined(env, &undefined); return undefined;
 }
 
+#ifdef XYVA_TEST_BUILD
+static napi_value ConfigureTestBarrier(napi_env env, napi_callback_info info) {
+  size_t count = 2;
+  napi_value args[2], receiver;
+  napi_get_cb_info(env, info, &count, args, &receiver, 0);
+  std::wstring reached, proceed;
+  if (count != 2 || !String(env, args[0], &reached) || !String(env, args[1], &proceed)
+    || !IsBarrierName(reached) || !IsBarrierName(proceed) || reached == proceed) {
+    Fail(env, "XYVA_INVALID_INPUT"); return 0;
+  }
+  if (testBarrier.reached) { CloseHandle(testBarrier.reached); testBarrier.reached = 0; }
+  if (testBarrier.proceed) { CloseHandle(testBarrier.proceed); testBarrier.proceed = 0; }
+  SetLastError(ERROR_SUCCESS);
+  testBarrier.reached = CreateEventW(0, TRUE, FALSE, reached.c_str());
+  const DWORD reachedError = GetLastError();
+  SetLastError(ERROR_SUCCESS);
+  testBarrier.proceed = CreateEventW(0, TRUE, FALSE, proceed.c_str());
+  const DWORD proceedError = GetLastError();
+  if (!testBarrier.active() || reachedError == ERROR_ALREADY_EXISTS || proceedError == ERROR_ALREADY_EXISTS) {
+    if (testBarrier.reached) { CloseHandle(testBarrier.reached); testBarrier.reached = 0; }
+    if (testBarrier.proceed) { CloseHandle(testBarrier.proceed); testBarrier.proceed = 0; }
+    Fail(env, "XYVA_TEST_EVENT_FAILED"); return 0;
+  }
+  napi_value undefined; napi_get_undefined(env, &undefined); return undefined;
+}
+
+static napi_value TestEvent(napi_env env, napi_callback_info info, bool wait) {
+  size_t count = 2;
+  napi_value args[2], receiver;
+  napi_get_cb_info(env, info, &count, args, &receiver, 0);
+  std::wstring name;
+  int32_t timeout = 0;
+  if (count < 1 || !String(env, args[0], &name) || !IsBarrierName(name)
+    || (wait && (count != 2 || napi_get_value_int32(env, args[1], &timeout) != napi_ok || timeout < 1 || timeout > 30'000))) {
+    Fail(env, "XYVA_INVALID_INPUT"); return 0;
+  }
+  HANDLE event = OpenEventW(wait ? SYNCHRONIZE : EVENT_MODIFY_STATE, FALSE, name.c_str());
+  if (!event) { Fail(env, "XYVA_TEST_EVENT_FAILED"); return 0; }
+  const DWORD result = wait ? WaitForSingleObject(event, static_cast<DWORD>(timeout)) : (SetEvent(event) ? WAIT_OBJECT_0 : WAIT_FAILED);
+  CloseHandle(event);
+  if (result != WAIT_OBJECT_0) { Fail(env, wait && result == WAIT_TIMEOUT ? "XYVA_TEST_BARRIER_TIMEOUT" : "XYVA_TEST_EVENT_FAILED"); return 0; }
+  napi_value undefined; napi_get_undefined(env, &undefined); return undefined;
+}
+static napi_value WaitTestBarrier(napi_env env, napi_callback_info info) { return TestEvent(env, info, true); }
+static napi_value SignalTestBarrier(napi_env env, napi_callback_info info) { return TestEvent(env, info, false); }
+#endif
+
 NAPI_MODULE_INIT() {
   napi_property_descriptor properties[] = {
     { "openTrustedRoot", 0, OpenTrustedRoot, 0, 0, 0, napi_default, 0 },
@@ -367,6 +437,11 @@ NAPI_MODULE_INIT() {
     { "readPrivateFile", 0, ReadPrivateFile, 0, 0, 0, napi_default, 0 },
     { "replacePrivateFile", 0, ReplacePrivateFile, 0, 0, 0, napi_default, 0 },
     { "deletePrivateFile", 0, DeletePrivateFile, 0, 0, 0, napi_default, 0 },
+#ifdef XYVA_TEST_BUILD
+    { "configureTestBarrier", 0, ConfigureTestBarrier, 0, 0, 0, napi_default, 0 },
+    { "waitTestBarrier", 0, WaitTestBarrier, 0, 0, 0, napi_default, 0 },
+    { "signalTestBarrier", 0, SignalTestBarrier, 0, 0, 0, napi_default, 0 },
+#endif
   };
   napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
   return exports;
