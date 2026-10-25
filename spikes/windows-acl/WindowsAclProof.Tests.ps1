@@ -182,7 +182,7 @@ function Get-PlatformEvidence {
 if ($TimeoutProbe) {
   if ([string]::IsNullOrEmpty($TimeoutMarkerPath)) { exit 77 }
   [IO.File]::WriteAllText($TimeoutMarkerPath, ([Diagnostics.Process]::GetCurrentProcess().Id).ToString())
-  Start-Sleep -Seconds 300
+  while ($true) { [Threading.Thread]::Sleep(1000) }
   exit 0
 }
 
