@@ -68,11 +68,7 @@ function windowsRootFor(filePath: string): { addon: WindowsSecureStoreAddon; roo
 
 function enforcePrivatePermissions(filePath: string): void {
   if (process.platform === 'win32') return
-  try {
-    fs.chmodSync(filePath, 0o600)
-  } catch {
-    // Windows ACLs are enforced by the current user profile; chmod is best-effort there.
-  }
+  fs.chmodSync(filePath, 0o600)
 }
 
 function isNotFound(error: unknown): boolean {
@@ -88,6 +84,23 @@ function assertPrivatePath(filePath: string): void {
     if (isNotFound(error)) return
     throw error
   }
+}
+
+function assertPrivateMode(filePath: string, expectedMode: number): void {
+  const stat = fs.statSync(filePath)
+  if ((stat.mode & 0o077) !== 0 || (stat.mode & 0o700) !== expectedMode) {
+    throw new SecureStoreError('XYVA_PRIVATE_PATH_UNSAFE', 'Private store permissions are not restrictive enough.')
+  }
+}
+
+function assertPrivateDirectory(directory: string): void {
+  assertPrivatePath(directory)
+  assertPrivateMode(directory, 0o700)
+}
+
+function assertPrivateFile(filePath: string): void {
+  assertPrivatePath(filePath)
+  assertPrivateMode(filePath, 0o600)
 }
 
 function readMasterKey(): Buffer | null {
@@ -107,12 +120,13 @@ function readMasterKey(): Buffer | null {
     }
     return decoded
   }
-  assertPrivatePath(filePath)
   let raw: string
   try {
+    assertPrivateFile(filePath)
     raw = fs.readFileSync(filePath, 'utf8').trim()
   } catch (error) {
     if (isNotFound(error)) return null
+    if (error instanceof SecureStoreError) throw error
     throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key cannot be read.')
   }
 
@@ -137,9 +151,8 @@ function createMasterKey(): Buffer {
       return readMasterKey() || (() => { throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key disappeared during creation.') })()
     }
   }
-  assertPrivatePath(directory)
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
-  assertPrivatePath(directory)
+  assertPrivateDirectory(directory)
 
   const key = crypto.randomBytes(MASTER_KEY_BYTES)
   try {
@@ -162,7 +175,6 @@ function createMasterKey(): Buffer {
 function getMasterKey(): Buffer {
   const existing = readMasterKey()
   if (existing) {
-    enforcePrivatePermissions(getMasterKeyPath())
     return existing
   }
 
@@ -222,18 +234,17 @@ export function writePrivateFile(filePath: string, content: string): void {
     return
   }
   const directory = path.dirname(filePath)
-  assertPrivatePath(directory)
-  assertPrivatePath(filePath)
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
-  assertPrivatePath(directory)
+  assertPrivateDirectory(directory)
   assertPrivatePath(filePath)
   const temporaryPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`
 
   try {
     fs.writeFileSync(temporaryPath, content, { encoding: 'utf8', mode: 0o600 })
     enforcePrivatePermissions(temporaryPath)
+    assertPrivateFile(temporaryPath)
     fs.renameSync(temporaryPath, filePath)
-    enforcePrivatePermissions(filePath)
+    assertPrivateFile(filePath)
   } finally {
     if (fs.existsSync(temporaryPath)) {
       fs.rmSync(temporaryPath, { force: true })
@@ -251,11 +262,12 @@ export function readPrivateFile(filePath: string): string | null {
       throw new SecureStoreError('XYVA_SECRET_INVALID', 'Private file cannot be read safely.')
     }
   }
-  assertPrivatePath(filePath)
   try {
+    assertPrivateFile(filePath)
     return fs.readFileSync(filePath, 'utf8')
   } catch (error) {
     if (isNotFound(error)) return null
+    if (error instanceof SecureStoreError) throw error
     throw new SecureStoreError('XYVA_SECRET_INVALID', 'Private file cannot be read safely.')
   }
 }
@@ -268,8 +280,11 @@ export function deletePrivateFile(filePath: string): void {
     }
     return
   }
-  assertPrivatePath(filePath)
-  try { fs.rmSync(filePath, { force: true }) } catch (error) {
+  try {
+    assertPrivateFile(filePath)
+    fs.rmSync(filePath, { force: true })
+  } catch (error) {
+    if (isNotFound(error)) return
     throw new SecureStoreError('XYVA_SECRET_INVALID', `Private file cannot be removed safely: ${(error as Error).message}`)
   }
 }

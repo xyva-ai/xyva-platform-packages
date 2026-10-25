@@ -125,8 +125,9 @@ export class AgentProjectRegistryService {
   }
 
   private async ensureRegistryDir(): Promise<void> {
-    if (process.platform === 'win32') return
-    await fs.mkdir(path.dirname(this.getRegistryPath()), { recursive: true })
+    // writePrivateFile owns secure directory creation on every platform.
+    // A separate recursive mkdir would create a POSIX root with the process
+    // default mode before the private-store validation runs.
   }
 
   private async readRegistry(): Promise<ProjectsRegistryFile> {

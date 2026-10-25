@@ -70,7 +70,7 @@ function writeLicense(token: string, machineId: string, overrides: Record<string
     machineId,
     portalUrl: 'http://localhost:3000',
     ...overrides,
-  }))
+  }), { mode: 0o600 })
 }
 
 beforeEach(() => {
@@ -175,7 +175,7 @@ describe('agent secret storage', () => {
       ...legacy,
       version: 1,
       password: 'legacy-plaintext-password',
-    }), { mode: 0o644 })
+    }), { mode: 0o600 })
     expect(await store.loadPassword(projectPath)).toBe('legacy-plaintext-password')
     expect(fs.readFileSync(filePath, 'utf8')).not.toContain('legacy-plaintext-password')
     expect(fileMode(filePath)).toBe(0o600)
@@ -195,6 +195,27 @@ describe('agent secret storage', () => {
     })).toThrow(/key is invalid/i)
     expect(fs.readFileSync(keyPath, 'utf8')).toBe('not-a-valid-master-key')
     expect(fs.existsSync(xyvaPath('credentials.json'))).toBe(false)
+  })
+
+  it('refuses an existing master key with broad POSIX permissions without repairing it', () => {
+    saveCredentials({
+      token: 'first-synthetic-token',
+      email: 'qa@example.test',
+      expiresAt: Date.now() + 60_000,
+      portalUrl: 'https://xyva.ai',
+    })
+    const keyPath = xyvaPath('secret-store.key')
+    const before = fs.readFileSync(keyPath, 'utf8')
+    fs.chmodSync(keyPath, 0o644)
+
+    expect(() => saveCredentials({
+      token: 'second-synthetic-token',
+      email: 'qa@example.test',
+      expiresAt: Date.now() + 60_000,
+      portalUrl: 'https://xyva.ai',
+    })).toThrow(/permissions are not restrictive/i)
+    expect(fs.readFileSync(keyPath, 'utf8')).toBe(before)
+    expect(fileMode(keyPath)).toBe(0o644)
   })
 
   it('refuses corrupt sealed configuration without replacing it with defaults', () => {
@@ -296,7 +317,7 @@ describe('agent license integrity', () => {
       lastValidated: Date.now(),
       offlineSince: null,
       machineId,
-    }))
+    }), { mode: 0o600 })
 
     expect(checkLicenseGuard()).toMatchObject({ allowed: false })
     const refreshedToken = signLicense(machineId)
@@ -327,7 +348,7 @@ describe('agent license integrity', () => {
       })).toString('base64url')
       const signature = crypto.createHmac('sha256', 'attacker-controlled-secret').update(data).digest('base64url')
       fs.mkdirSync(xyvaPath(), { recursive: true })
-      fs.writeFileSync(xyvaPath('license.json'), JSON.stringify(`XYVA-${data}.${signature}`))
+      fs.writeFileSync(xyvaPath('license.json'), JSON.stringify(`XYVA-${data}.${signature}`), { mode: 0o600 })
 
       expect(checkLicenseGuard()).toMatchObject({
         allowed: false,
