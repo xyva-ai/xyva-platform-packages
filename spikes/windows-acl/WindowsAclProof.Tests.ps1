@@ -367,8 +367,8 @@ try {
   }
   Invoke-RequiredTest 'unprivileged-effective-access-controls' { Test-UnprivilegedIdentity $controlFile $controlDirectory $impersonationPrivateFile $impersonationPrivateDirectory $raceProbeParent }
   Invoke-RequiredTest 'deterministic-parent-swap-race-rejection' {
-    $raceRoot = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-" + [guid]::NewGuid())
-    $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-race-outside-" + [guid]::NewGuid())
+    $raceRoot = Join-Path $env:PUBLIC ("xyva-acl-race-" + [guid]::NewGuid())
+    $outside = Join-Path $env:PUBLIC ("xyva-acl-race-outside-" + [guid]::NewGuid())
     $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape.txt'
     $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; Result = $null; ResultingParentHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
     try {
@@ -412,8 +412,8 @@ try {
     }
   }
   Invoke-RequiredTest 'deterministic-directory-parent-swap-race-rejection' {
-    $raceRoot = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-directory-race-" + [guid]::NewGuid())
-    $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-directory-race-outside-" + [guid]::NewGuid())
+    $raceRoot = Join-Path $env:PUBLIC ("xyva-acl-directory-race-" + [guid]::NewGuid())
+    $outside = Join-Path $env:PUBLIC ("xyva-acl-directory-race-outside-" + [guid]::NewGuid())
     $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape'
     $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; Result = $null; ResultingDirectoryHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
     try {
