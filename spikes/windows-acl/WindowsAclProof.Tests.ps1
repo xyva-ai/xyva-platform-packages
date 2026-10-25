@@ -291,7 +291,7 @@ function Invoke-RaceSwapProcess([string] $RaceRoot, [string] $Parent, [string] $
 function Assert-RaceEvidence($State, [string] $Moved, [string] $Leaf) {
   if (-not $State.HookReached -or -not $State.BarrierReached -or [string]::IsNullOrEmpty($State.SwapPerformedBySid) -or $State.SwapPerformedBySid -eq (Get-CurrentSid) -or -not $State.ExternalUnchanged -or -not $State.AttackerCleanup -or -not $State.Cleanup) { throw 'Race evidence is incomplete or attacker identity is invalid' }
   if ($State.Result -eq 'created-via-held-parent-handle') {
-    if (-not (Test-Path -LiteralPath (Join-Path $Moved $Leaf))) { throw 'Handle-bound race creation was not found in the moved original parent' }
+    if (-not $State.HandleBoundTargetVerified) { throw 'Handle-bound race creation was not found in the moved original parent' }
     return
   }
   if ($State.Result -like 'rejected:*' -and $null -ne $State.NativeErrorCode -and @([int]80, [int]183) -contains [int]$State.NativeErrorCode) { return }
@@ -409,7 +409,7 @@ try {
     $raceRoot = Join-Path $env:PUBLIC ("xyva-acl-race-" + [guid]::NewGuid())
     $outside = Join-Path $env:PUBLIC ("xyva-acl-race-outside-" + [guid]::NewGuid())
     $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape.txt'
-    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; AttackerCleanup = $false; Result = $null; ResultingParentHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
+    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; AttackerCleanup = $false; Result = $null; HandleBoundTargetVerified = $false; ResultingParentHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
     try {
       New-PrivateDirectory $raceRoot; New-PrivateDirectory $parent; [IO.Directory]::CreateDirectory($outside) | Out-Null
       $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
@@ -440,6 +440,7 @@ try {
       if (-not $raceState.HookReached) { throw 'Race hook was not reached' }
       if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Race test sentinel was modified' }
       if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape.txt')) { throw 'Parent swap redirected native file creation outside validated path' }
+      if ($raceState.Result -eq 'created-via-held-parent-handle') { $raceState.HandleBoundTargetVerified = Test-Path -LiteralPath (Join-Path $moved 'must-not-escape.txt') }
       $raceState.ExternalUnchanged = $true
     } finally {
       $script:BeforePrivateCreateHook = $null
@@ -455,7 +456,7 @@ try {
     $raceRoot = Join-Path $env:PUBLIC ("xyva-acl-directory-race-" + [guid]::NewGuid())
     $outside = Join-Path $env:PUBLIC ("xyva-acl-directory-race-outside-" + [guid]::NewGuid())
     $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape'
-    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; AttackerCleanup = $false; Result = $null; ResultingDirectoryHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
+    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; AttackerCleanup = $false; Result = $null; HandleBoundTargetVerified = $false; ResultingDirectoryHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
     try {
       New-PrivateDirectory $raceRoot | Out-Null; New-PrivateDirectory $parent | Out-Null; [IO.Directory]::CreateDirectory($outside) | Out-Null
       $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
@@ -482,6 +483,7 @@ try {
       if (-not $raceState.HookReached) { throw 'Directory race hook was not reached' }
       if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Directory race test sentinel was modified' }
       if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape')) { throw 'Parent swap redirected native directory creation outside validated path' }
+      if ($raceState.Result -eq 'created-via-held-parent-handle') { $raceState.HandleBoundTargetVerified = Test-Path -LiteralPath (Join-Path $moved 'must-not-escape') }
       $raceState.ExternalUnchanged = $true
     } finally {
       $script:BeforePrivateDirectoryCreateHook = $null
