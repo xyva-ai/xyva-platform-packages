@@ -433,6 +433,52 @@ static napi_value TestEvent(napi_env env, napi_callback_info info, bool wait) {
 }
 static napi_value WaitTestBarrier(napi_env env, napi_callback_info info) { return TestEvent(env, info, true); }
 static napi_value SignalTestBarrier(napi_env env, napi_callback_info info) { return TestEvent(env, info, false); }
+
+static napi_value TestProbe(napi_env env, napi_callback_info info, DWORD access, bool createDirectory) {
+  size_t count = 1;
+  napi_value args[1], receiver;
+  napi_get_cb_info(env, info, &count, args, &receiver, 0);
+  std::wstring target;
+  if (count != 1 || !String(env, args[0], &target) || target.empty()) { Fail(env, "XYVA_INVALID_INPUT"); return 0; }
+  DWORD error = ERROR_SUCCESS;
+  if (createDirectory) {
+    if (!CreateDirectoryW(target.c_str(), 0)) error = GetLastError();
+  } else {
+    HANDLE handle = CreateFileW(target.c_str(), access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    if (handle == INVALID_HANDLE_VALUE) error = GetLastError();
+    else CloseHandle(handle);
+  }
+  napi_value value;
+  napi_create_uint32(env, error, &value);
+  return value;
+}
+
+static napi_value TestProbeRead(napi_env env, napi_callback_info info) { return TestProbe(env, info, GENERIC_READ, false); }
+static napi_value TestProbeWrite(napi_env env, napi_callback_info info) { return TestProbe(env, info, GENERIC_WRITE, false); }
+static napi_value TestProbeCreateDirectory(napi_env env, napi_callback_info info) { return TestProbe(env, info, 0, true); }
+
+static napi_value TestCurrentToken(napi_env env, napi_callback_info info) {
+  size_t count = 0;
+  napi_value receiver;
+  napi_get_cb_info(env, info, &count, 0, &receiver, 0);
+  if (count) { Fail(env, "XYVA_INVALID_INPUT"); return 0; }
+  const std::wstring sid = CurrentSid();
+  SID_IDENTIFIER_AUTHORITY authority = SECURITY_NT_AUTHORITY;
+  PSID administrators = 0;
+  BOOL member = FALSE;
+  const bool valid = !sid.empty()
+    && AllocateAndInitializeSid(&authority, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &administrators)
+    && CheckTokenMembership(0, administrators, &member);
+  if (administrators) FreeSid(administrators);
+  if (!valid) { Fail(env, "XYVA_TOKEN_PROBE_FAILED"); return 0; }
+  napi_value result, value;
+  napi_create_object(env, &result);
+  napi_create_string_utf16(env, reinterpret_cast<const char16_t*>(sid.data()), sid.size(), &value);
+  napi_set_named_property(env, result, "sid", value);
+  napi_get_boolean(env, member != FALSE, &value);
+  napi_set_named_property(env, result, "administrator", value);
+  return result;
+}
 #endif
 
 NAPI_MODULE_INIT() {
@@ -449,6 +495,10 @@ NAPI_MODULE_INIT() {
     { "configureTestBarrier", 0, ConfigureTestBarrier, 0, 0, 0, napi_default, 0 },
     { "waitTestBarrier", 0, WaitTestBarrier, 0, 0, 0, napi_default, 0 },
     { "signalTestBarrier", 0, SignalTestBarrier, 0, 0, 0, napi_default, 0 },
+    { "testProbeRead", 0, TestProbeRead, 0, 0, 0, napi_default, 0 },
+    { "testProbeWrite", 0, TestProbeWrite, 0, 0, 0, napi_default, 0 },
+    { "testProbeCreateDirectory", 0, TestProbeCreateDirectory, 0, 0, 0, napi_default, 0 },
+    { "testCurrentToken", 0, TestCurrentToken, 0, 0, 0, napi_default, 0 },
 #endif
   };
   napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);

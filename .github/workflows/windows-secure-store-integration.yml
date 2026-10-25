@@ -43,9 +43,25 @@ jobs:
           $env:XYVA_EVIDENCE_DIR = (New-Item -ItemType Directory evidence -Force).FullName
           npx vitest run -c vitest.public.config.ts tests/backend/agent-windows-secure-store.test.ts
           node --expose-gc packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
+          $testAddon = (Resolve-Path 'packages/agent/native/windows-secure-store/build/Release/xyva_windows_secure_store_test.node').Path
+          $fixtureBase = (New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ('xyva-secure-store-second-user-' + [guid]::NewGuid().ToString('N'))) -Force).FullName
+          $fixtureRoot = Join-Path $fixtureBase 'secure-root'
+          $controlDirectory = Join-Path $fixtureBase 'control'
+          $privateDirectory = Join-Path $fixtureRoot 'private-directory'
+          $privateFile = Join-Path $fixtureRoot 'private.json'
+          New-Item -ItemType Directory $controlDirectory | Out-Null
+          node -e "const [addonPath,root,file,dir]=process.argv.slice(1); const addon=require(addonPath); const trusted=addon.ensureTrustedRoot(root); addon.createPrivateFile(trusted,'private.json',Buffer.from('synthetic-only')); addon.createPrivateDirectory(trusted,'private-directory');" $testAddon $fixtureRoot $privateFile $privateDirectory
+          $secondUserEvidence = Join-Path $env:XYVA_EVIDENCE_DIR 'second-user-process.json'
+          try {
+            & pwsh -NoLogo -NoProfile -NonInteractive -File packages/agent/native/windows-secure-store/test/run-second-user.ps1 -NodeExe (Get-Command node).Source -ChildScript (Resolve-Path 'packages/agent/native/windows-secure-store/test/second-user-child.cjs').Path -Addon $testAddon -Root $fixtureRoot -ControlDirectory $controlDirectory -PrivateFile $privateFile -PrivateDirectory $privateDirectory -EvidencePath $secondUserEvidence
+            $secondUserExit = $LASTEXITCODE
+          } finally {
+            if (Test-Path -LiteralPath $fixtureRoot) { Remove-Item -LiteralPath $fixtureRoot -Recurse -Force }
+          }
+          if ($secondUserExit -ne 0) { throw "Second-user process test failed with exit code $secondUserExit" }
           $binary = 'packages/agent/dist/native/win32-x64/xyva_windows_secure_store.node'
           if (-not (Test-Path -LiteralPath $binary)) { throw 'Native package binary missing' }
-          @{ sha=(git rev-parse HEAD); node=(node --version); npm=(npm --version); architecture=$env:PROCESSOR_ARCHITECTURE; runner=$env:ImageOS; imageVersion=$env:ImageVersion; binarySha=(Get-FileHash -Algorithm SHA256 $binary).Hash; tests='agent-windows-secure-store' } | ConvertTo-Json | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM
+          @{ sha=(git rev-parse HEAD); node=(node --version); npm=(npm --version); architecture=$env:PROCESSOR_ARCHITECTURE; runner=$env:ImageOS; imageVersion=$env:ImageVersion; binarySha=(Get-FileHash -Algorithm SHA256 $binary).Hash; tests='agent-windows-secure-store,parent-swap-create-replace-read-delete,second-user-kernel-denials' } | ConvertTo-Json | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM
           npm pack --workspace @xyva/agent --pack-destination evidence --ignore-scripts
           $tarball = Get-ChildItem evidence/xyva-agent-*.tgz | Select-Object -First 1
           if (-not $tarball) { throw 'Agent package tarball missing' }
@@ -72,6 +88,7 @@ jobs:
         run: |
           npx vitest run -c vitest.public.config.ts tests/backend/agent-windows-secure-store.test.ts
           node --expose-gc packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
+          if (-not (Test-Path -LiteralPath evidence/second-user-process.json)) { throw 'Second-user evidence missing' }
           $evidence = Get-Content evidence/windows-secure-store-integration.json -Raw | ConvertFrom-Json
           $evidence | Add-Member -NotePropertyName node24 -NotePropertyValue (node --version)
           $evidence | ConvertTo-Json | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM
