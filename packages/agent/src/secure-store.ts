@@ -240,7 +240,7 @@ export function writePrivateFile(filePath: string, content: string): void {
       addon.createPrivateFile(root, temporaryLeaf, Buffer.from(content, 'utf8'))
       addon.replacePrivateFile(root, temporaryLeaf, leaf)
     } catch (error) {
-      try { addon.deletePrivateFile(root, temporaryLeaf) } catch { /* temporary file may already have been renamed or never created */ }
+      addon.deletePrivateFile(root, temporaryLeaf)
       throw error
     }
     return
