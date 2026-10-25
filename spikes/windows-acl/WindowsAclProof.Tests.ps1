@@ -75,7 +75,7 @@ function Test-NativeMalformedDaclFixture([ValidateSet('null', 'empty')] [string]
   } finally {
     if ($handle -ne [IntPtr]::Zero) {
       try { [XyvaAclNative]::SetDaclFromSddl($handle, (New-PrivateSddl (Get-CurrentSid) $false)) }
-      finally { [void][XyvaAclNative]::CloseHandle($handle) }
+      finally { [XyvaAclNative]::CloseHandleChecked($handle) }
     }
     if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Force -ErrorAction Stop }
     if (Test-Path -LiteralPath $fixture) { throw "Native $Kind DACL fixture cleanup failed" }
@@ -164,17 +164,22 @@ function Assert-TimeoutEvidence($Evidence) {
 }
 
 function Get-PlatformEvidence {
-  if (-not $IsWindows) { return [pscustomobject]@{ OS = [Environment]::OSVersion.VersionString; Caption = $null; Build = $null; OSArchitecture = $null; ProcessArchitecture = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE'); DeviceType = 'non-windows-host' } }
+  if (-not $IsWindows) { return [pscustomobject]@{ OS = [Environment]::OSVersion.VersionString; Caption = $null; Build = $null; OSArchitecture = $null; NativeOSArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString(); ProcessArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString(); ProcessIs64Bit = [Environment]::Is64BitProcess; FixtureFileSystem = $null; DeviceType = 'non-windows-host' } }
   $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
   $computer = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
   $caption = [string]$os.Caption
+  $fixtureDrive = [IO.Path]::GetPathRoot([IO.Path]::GetTempPath()).TrimEnd('\').TrimEnd(':')
+  $fixtureFileSystem = [string](Get-Volume -DriveLetter $fixtureDrive -ErrorAction Stop).FileSystem
   $deviceType = if ($env:GITHUB_ACTIONS -eq 'true') { 'github-hosted-vm' } elseif ($computer.Model -match 'Virtual|VMware|VirtualBox|KVM|Hyper-V') { 'vm' } else { 'physical-or-unknown' }
   [pscustomobject]@{
     OS = [Environment]::OSVersion.VersionString
     Caption = $caption
     Build = [string]$os.BuildNumber
     OSArchitecture = [string]$os.OSArchitecture
-    ProcessArchitecture = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITEW6432') ?? [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE')
+    NativeOSArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    ProcessArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+    ProcessIs64Bit = [Environment]::Is64BitProcess
+    FixtureFileSystem = $fixtureFileSystem
     DeviceType = $deviceType
   }
 }
@@ -326,15 +331,15 @@ function Test-TimeoutFaultInjection {
     $ping = Join-Path $env:SystemRoot 'System32\PING.EXE'
     $arguments = 'PING.EXE -n 300 127.0.0.1'
     try {
-      [XyvaAclNative]::RunProcessWithLogonTimeout($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $ping, $arguments, $env:SystemRoot, 5000)
+      [XyvaAclNative]::RunProcessWithLogon($name, $env:COMPUTERNAME, ([pscredential]::new($name, $password)).GetNetworkCredential().Password, $ping, $arguments, $env:SystemRoot, 5000)
       throw 'Timeout probe unexpectedly completed'
     } catch [TimeoutException] {
+      if (-not ($_.Exception -is [XyvaAclNative+ProcessTimeoutException])) { throw "Timeout did not provide native process evidence: $($_.Exception.GetType().FullName)" }
       $timeoutEvidence.TimeoutObserved = $true
-      if ($_.Exception.Message -notmatch 'pid=(\d+);terminated=true;exitCode=(\d+)') { throw "Timeout termination evidence was malformed: $($_.Exception.Message)" }
-      $timeoutEvidence.ChildPid = [int]$Matches[1]
-      $timeoutEvidence.ExitCode = [int]$Matches[2]
+      $timeoutEvidence.ChildPid = [int]$_.Exception.ProcessId
+      $timeoutEvidence.ExitCode = [int]$_.Exception.ExitCode
       $timeoutEvidence.Terminated = $true
-      $timeoutEvidence.HandlesClosed = $true
+      $timeoutEvidence.HandlesClosed = [bool]$_.Exception.HandlesClosed
     }
     try { Get-Process -Id $timeoutEvidence.ChildPid -ErrorAction Stop | Out-Null; throw 'Timed-out child is still running' } catch { if ($_.Exception.Message -eq 'Timed-out child is still running') { throw } }
     Assert-TimeoutEvidence ([pscustomobject]$timeoutEvidence)
@@ -377,15 +382,16 @@ function Assert-RaceEvidence($State, [string] $Moved, [string] $Leaf) {
 
 try {
   $platform = Get-PlatformEvidence
-  if ($platform.Caption -match '^Microsoft Windows 11' -and $platform.OSArchitecture -match '64' -and $platform.ProcessArchitecture -match 'AMD64') {
-    Add-Result 'windows-11-device-identity' 'PASS' "caption=$($platform.Caption);build=$($platform.Build);osArchitecture=$($platform.OSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
+  if ($IsWindows -and $platform.FixtureFileSystem -ne 'NTFS') { throw "Refusing ACL proof on non-NTFS fixture volume: $($platform.FixtureFileSystem)" }
+  if ($platform.Caption -match '^Microsoft Windows 11' -and $platform.NativeOSArchitecture -eq 'X64' -and $platform.ProcessArchitecture -eq 'X64' -and $platform.ProcessIs64Bit) {
+    Add-Result 'windows-11-device-identity' 'PASS' "caption=$($platform.Caption);build=$($platform.Build);nativeOSArchitecture=$($platform.NativeOSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
   } else {
-    Add-Result 'windows-11-device-identity' 'NOT_EXECUTED' "caption=$($platform.Caption);build=$($platform.Build);osArchitecture=$($platform.OSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
+    Add-Result 'windows-11-device-identity' 'NOT_EXECUTED' "caption=$($platform.Caption);build=$($platform.Build);nativeOSArchitecture=$($platform.NativeOSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
   }
-  if ($platform.Caption -match '^Microsoft Windows 11' -and $platform.OSArchitecture -match 'ARM64' -and $platform.ProcessArchitecture -match 'ARM64') {
-    Add-Result 'windows-11-arm64-native-identity' 'PASS' "caption=$($platform.Caption);build=$($platform.Build);osArchitecture=$($platform.OSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
+  if ($platform.Caption -match '^Microsoft Windows 11' -and $platform.NativeOSArchitecture -eq 'Arm64' -and $platform.ProcessArchitecture -eq 'Arm64') {
+    Add-Result 'windows-11-arm64-native-identity' 'PASS' "caption=$($platform.Caption);build=$($platform.Build);nativeOSArchitecture=$($platform.NativeOSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
   } else {
-    Add-Result 'windows-11-arm64-native-identity' 'NOT_EXECUTED' "caption=$($platform.Caption);build=$($platform.Build);osArchitecture=$($platform.OSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
+    Add-Result 'windows-11-arm64-native-identity' 'NOT_EXECUTED' "caption=$($platform.Caption);build=$($platform.Build);nativeOSArchitecture=$($platform.NativeOSArchitecture);processArchitecture=$($platform.ProcessArchitecture);deviceType=$($platform.DeviceType)"
   }
   $rootCreation = $null
   Invoke-RequiredTest 'private-directory-create' { $script:rootCreation = New-PrivateDirectory $root }
@@ -431,6 +437,7 @@ try {
   Invoke-RequiredTest 'directory-handle-cleanup-allows-rename-and-remove' {
     $source = Join-Path $root 'cleanup-directory'; $moved = Join-Path $root 'cleanup-directory-moved'
     New-PrivateDirectory $source | Out-Null
+    [XyvaAclNative]::AssertExclusiveReopen($source, $true)
     Move-Item -LiteralPath $source -Destination $moved -ErrorAction Stop
     Remove-Item -LiteralPath $moved -Recurse -Force -ErrorAction Stop
     if ((Test-Path -LiteralPath $source) -or (Test-Path -LiteralPath $moved)) { throw 'Directory handle prevented cleanup' }
@@ -461,18 +468,28 @@ try {
     [IO.Directory]::CreateDirectory($outside) | Out-Null
     $junction = Join-Path $root 'reparse-parent'
     New-Item -ItemType Junction -Path $junction -Target $outside -ErrorAction Stop | Out-Null
-    try { New-PrivateFile (Join-Path $junction 'must-not-exist.txt') 'synthetic-secret' | Out-Null; throw 'Reparse parent was accepted' } catch { if ($_.Exception.Message -eq 'Reparse parent was accepted') { throw } }
-    Remove-Item -LiteralPath $junction -Force
-    Remove-Item -LiteralPath $outside -Recurse -Force
+    $outsideTarget = Join-Path $outside 'must-not-exist.txt'
+    try {
+      try { New-PrivateFile (Join-Path $junction 'must-not-exist.txt') 'synthetic-secret' | Out-Null; throw 'Reparse parent was accepted' } catch [IO.IOException] { if ($_.Exception.Message -ne 'Unexpected reparse point') { throw } } catch { throw }
+      if (Test-Path -LiteralPath $outsideTarget) { throw 'Reparse rejection created an external file' }
+    } finally {
+      Remove-Item -LiteralPath $junction -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath $outside -Recurse -Force -ErrorAction SilentlyContinue
+    }
   }
   Invoke-RequiredTest 'directory-parent-chain-reparse-rejection' {
     $outside = Join-Path ([IO.Path]::GetTempPath()) ("xyva-acl-directory-outside-" + [guid]::NewGuid())
     [IO.Directory]::CreateDirectory($outside) | Out-Null
     $junction = Join-Path $root 'directory-reparse-parent'
     New-Item -ItemType Junction -Path $junction -Target $outside -ErrorAction Stop | Out-Null
-    try { New-PrivateDirectory (Join-Path $junction 'must-not-exist') | Out-Null; throw 'Directory reparse parent was accepted' } catch { if ($_.Exception.Message -eq 'Directory reparse parent was accepted') { throw } }
-    Remove-Item -LiteralPath $junction -Force
-    Remove-Item -LiteralPath $outside -Recurse -Force
+    $outsideTarget = Join-Path $outside 'must-not-exist'
+    try {
+      try { New-PrivateDirectory (Join-Path $junction 'must-not-exist') | Out-Null; throw 'Directory reparse parent was accepted' } catch [IO.IOException] { if ($_.Exception.Message -ne 'Unexpected reparse point') { throw } } catch { throw }
+      if (Test-Path -LiteralPath $outsideTarget) { throw 'Reparse rejection created an external directory' }
+    } finally {
+      Remove-Item -LiteralPath $junction -Force -ErrorAction SilentlyContinue
+      Remove-Item -LiteralPath $outside -Recurse -Force -ErrorAction SilentlyContinue
+    }
   }
   foreach ($sid in @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545', 'S-1-5-32-546')) {
     Invoke-RequiredTest "unsafe-allow-rejected-$sid" { Assert-UnsafeAllowRejected $sid ("unsafe-" + $sid.Replace('-', '_') + '.txt') }

@@ -72,6 +72,22 @@ public static class XyvaAclNative {
     public ushort Control { get; set; }
   }
 
+  public sealed class ProcessTimeoutException : TimeoutException {
+    public int ProcessId { get; private set; }
+    public uint ExitCode { get; private set; }
+    public bool HandlesClosed { get; internal set; }
+    public ProcessTimeoutException(int processId, uint exitCode) : base(String.Format("pid={0};terminated=true;exitCode={1}", processId, exitCode)) {
+      ProcessId = processId;
+      ExitCode = exitCode;
+      HandlesClosed = false;
+    }
+  }
+
+  public static void CloseHandleChecked(IntPtr handle) {
+    if (handle == IntPtr.Zero || handle == new IntPtr(-1)) return;
+    if (!CloseHandle(handle)) throw new Win32Exception(Marshal.GetLastWin32Error());
+  }
+
   public static SECURITY_ATTRIBUTES SecurityAttributes(string sddl) {
     IntPtr descriptor; uint size;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out descriptor, out size))
@@ -166,6 +182,7 @@ public static class XyvaAclNative {
     STARTUPINFO startup = new STARTUPINFO(); startup.cb = Marshal.SizeOf(typeof(STARTUPINFO)); PROCESS_INFORMATION process;
     StringBuilder mutableCommandLine = new StringBuilder(commandLine);
     if (!CreateProcessWithLogonW(username, domain, password, 1, application, mutableCommandLine, 0x08000000, IntPtr.Zero, currentDirectory, ref startup, out process)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    ProcessTimeoutException timeout = null;
     try {
       uint wait = WaitForSingleObject(process.hProcess, timeoutMilliseconds);
       if (wait == 0x00000102) {
@@ -173,31 +190,22 @@ public static class XyvaAclNative {
         uint terminatedWait = WaitForSingleObject(process.hProcess, 5000);
         if (terminatedWait != 0) throw new TimeoutException(String.Format("pid={0};terminated=false;wait={1}", process.dwProcessId, terminatedWait));
         uint terminatedExitCode; if (!GetExitCodeProcess(process.hProcess, out terminatedExitCode)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        throw new TimeoutException(String.Format("pid={0};terminated=true;exitCode={1}", process.dwProcessId, terminatedExitCode));
+        timeout = new ProcessTimeoutException(process.dwProcessId, terminatedExitCode);
+        throw timeout;
       }
       if (wait != 0) throw new Win32Exception((int)wait);
       uint exitCode; if (!GetExitCodeProcess(process.hProcess, out exitCode)) throw new Win32Exception(Marshal.GetLastWin32Error()); return unchecked((int)exitCode);
     }
-    finally { if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread); if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess); }
+    finally {
+      Exception closeFailure = null;
+      try { CloseHandleChecked(process.hThread); } catch (Exception ex) { closeFailure = ex; }
+      try { CloseHandleChecked(process.hProcess); } catch (Exception ex) { if (closeFailure == null) closeFailure = ex; }
+      if (closeFailure != null) throw closeFailure;
+      if (timeout != null) timeout.HandlesClosed = true;
+    }
   }
   public static int RunProcessWithLogon(string username, string domain, string password, string application, string commandLine, string currentDirectory) {
     return RunProcessWithLogon(username, domain, password, application, commandLine, currentDirectory, 30000);
-  }
-  public static int RunProcessWithLogonTimeout(string username, string domain, string password, string application, string commandLine, string currentDirectory, uint timeoutMilliseconds) {
-    STARTUPINFO startup = new STARTUPINFO(); startup.cb = Marshal.SizeOf(typeof(STARTUPINFO)); PROCESS_INFORMATION process;
-    StringBuilder mutableCommandLine = new StringBuilder(commandLine);
-    if (!CreateProcessWithLogonW(username, domain, password, 1, application, mutableCommandLine, 0x08000000, IntPtr.Zero, currentDirectory, ref startup, out process)) throw new Win32Exception(Marshal.GetLastWin32Error());
-    try {
-      Thread.Sleep(checked((int)timeoutMilliseconds));
-      uint beforeExitCode; if (!GetExitCodeProcess(process.hProcess, out beforeExitCode)) throw new Win32Exception(Marshal.GetLastWin32Error());
-      if (beforeExitCode != 259) throw new TimeoutException(String.Format("pid={0};terminated=false;already-exited;exitCode={1}", process.dwProcessId, beforeExitCode));
-      if (!TerminateProcess(process.hProcess, 124)) throw new Win32Exception(Marshal.GetLastWin32Error());
-      uint terminatedWait = WaitForSingleObject(process.hProcess, 5000);
-      if (terminatedWait != 0) throw new TimeoutException(String.Format("pid={0};terminated=false;wait={1}", process.dwProcessId, terminatedWait));
-      uint terminatedExitCode; if (!GetExitCodeProcess(process.hProcess, out terminatedExitCode)) throw new Win32Exception(Marshal.GetLastWin32Error());
-      throw new TimeoutException(String.Format("pid={0};terminated=true;exitCode={1}", process.dwProcessId, terminatedExitCode));
-    }
-    finally { if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread); if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess); }
   }
   static void ThrowNtStatus(int status) { throw new Win32Exception((int)RtlNtStatusToDosError(status)); }
   static IntPtr OpenRelative(IntPtr root, string component, uint desiredAccess, uint createDisposition, uint createOptions, IntPtr securityDescriptor) {
@@ -215,22 +223,29 @@ public static class XyvaAclNative {
     SECURITY_ATTRIBUTES unused = new SECURITY_ATTRIBUTES();
     IntPtr handle = CreateFile(root, 0x001000A1, 0x7, ref unused, 3, 0x02200000, IntPtr.Zero);
     if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
-    try { AssertNotReparse(handle); return handle; } catch { CloseHandle(handle); throw; }
+    try { AssertNotReparse(handle); return handle; } catch { CloseHandleChecked(handle); throw; }
   }
   public static IntPtr OpenRelativeDirectory(IntPtr root, string component) {
     IntPtr handle = OpenRelative(root, component, 0x001000A1, 1, 0x00200021, IntPtr.Zero);
-    try { AssertNotReparse(handle); return handle; } catch { CloseHandle(handle); throw; }
+    try { AssertNotReparse(handle); return handle; } catch { CloseHandleChecked(handle); throw; }
   }
   public static IntPtr CreatePrivateFileRelative(IntPtr parent, string name, IntPtr securityDescriptor) {
     return OpenRelative(parent, name, 0x40120000, 2, 0x00000060, securityDescriptor);
   }
   public static IntPtr CreatePrivateDirectoryRelative(IntPtr parent, string name, IntPtr securityDescriptor) {
     IntPtr handle = OpenRelative(parent, name, 0x001200A1, 2, 0x00000021, securityDescriptor);
-    try { AssertNotReparse(handle); return handle; } catch { CloseHandle(handle); throw; }
+    try { AssertNotReparse(handle); return handle; } catch { CloseHandleChecked(handle); throw; }
   }
   public static string HandleIdentity(IntPtr handle) {
     BY_HANDLE_FILE_INFORMATION info; if (!GetFileInformationByHandle(handle, out info)) throw new Win32Exception(Marshal.GetLastWin32Error());
     return String.Format("volume={0:X8};file={1:X8}{2:X8};attributes={3:X8}", info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow, info.FileAttributes);
+  }
+  public static void AssertExclusiveReopen(string path, bool directory) {
+    SECURITY_ATTRIBUTES unused = new SECURITY_ATTRIBUTES();
+    uint flags = directory ? 0x02000000U : 0x80U;
+    IntPtr handle = CreateFile(path, 0, 0, ref unused, 3, flags, IntPtr.Zero);
+    if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    CloseHandleChecked(handle);
   }
   public static void AssertNotReparse(IntPtr handle) {
     BY_HANDLE_FILE_INFORMATION info; if (!GetFileInformationByHandle(handle, out info)) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -277,7 +292,7 @@ function Get-AclEvidenceFromHandle([IntPtr] $Handle) {
 
 function Get-AclEvidenceFromPath([string] $Path, [bool] $Directory = $false) {
   $handle = [XyvaAclNative]::OpenForSecurityQuery($Path, $Directory)
-  try { return Get-AclEvidenceFromHandle $handle } finally { [void][XyvaAclNative]::CloseHandle($handle) }
+  try { return Get-AclEvidenceFromHandle $handle } finally { [XyvaAclNative]::CloseHandleChecked($handle) }
 }
 
 function Assert-PrivateAclEvidence($Evidence, [string] $OwnerSid, [bool] $Directory) {
@@ -318,21 +333,21 @@ function Open-ValidatedParentHandle([string] $Path) {
   try {
     foreach ($component in $components) {
       $nextHandle = [XyvaAclNative]::OpenRelativeDirectory($currentHandle, $component)
-      if ($currentHandle -ne $rootHandle) { [void][XyvaAclNative]::CloseHandle($currentHandle) }
+      if ($currentHandle -ne $rootHandle) { [XyvaAclNative]::CloseHandleChecked($currentHandle) }
       $currentHandle = $nextHandle
     }
     return [pscustomobject]@{ Handle = $currentHandle; RootHandle = $rootHandle; RootIdentity = [XyvaAclNative]::HandleIdentity($rootHandle); ParentIdentity = [XyvaAclNative]::HandleIdentity($currentHandle); Leaf = $leaf }
   } catch {
-    if ($currentHandle -ne $rootHandle) { [void][XyvaAclNative]::CloseHandle($currentHandle) }
-    [void][XyvaAclNative]::CloseHandle($rootHandle)
+    if ($currentHandle -ne $rootHandle) { [XyvaAclNative]::CloseHandleChecked($currentHandle) }
+    [XyvaAclNative]::CloseHandleChecked($rootHandle)
     throw
   }
 }
 
 function Close-ParentResolution($Parent) {
   if ($null -eq $Parent) { return }
-  if ($Parent.Handle -ne $Parent.RootHandle) { [void][XyvaAclNative]::CloseHandle($Parent.Handle) }
-  [void][XyvaAclNative]::CloseHandle($Parent.RootHandle)
+  if ($Parent.Handle -ne $Parent.RootHandle) { [XyvaAclNative]::CloseHandleChecked($Parent.Handle) }
+  [XyvaAclNative]::CloseHandleChecked($Parent.RootHandle)
 }
 
 function New-PrivateDirectory([string] $Path) {
@@ -348,7 +363,7 @@ function New-PrivateDirectory([string] $Path) {
     $identity = [XyvaAclNative]::HandleIdentity($handle)
     return [pscustomobject]@{ Evidence = $evidence; Identity = $identity; RootIdentity = $parent.RootIdentity; ParentIdentity = $parent.ParentIdentity }
   } finally {
-    if ($handle -ne [IntPtr]::Zero) { [void][XyvaAclNative]::CloseHandle($handle) }
+    if ($handle -ne [IntPtr]::Zero) { [XyvaAclNative]::CloseHandleChecked($handle) }
     if ($null -ne $attributes) { [void][XyvaAclNative]::LocalFree($attributes.lpSecurityDescriptor) }
     Close-ParentResolution $parent
   }
@@ -371,7 +386,7 @@ function New-PrivateFile([string] $Path, [string] $Content) {
   } finally {
     if ($null -ne $stream) { $stream.Dispose() }
     elseif ($null -ne $safeHandle) { $safeHandle.Dispose() }
-    elseif ($null -ne $handle -and $handle -ne [IntPtr]::Zero) { [void][XyvaAclNative]::CloseHandle($handle) }
+    elseif ($null -ne $handle -and $handle -ne [IntPtr]::Zero) { [XyvaAclNative]::CloseHandleChecked($handle) }
     if ($null -ne $attributes) { [void][XyvaAclNative]::LocalFree($attributes.lpSecurityDescriptor) }
     Close-ParentResolution $parent
   }

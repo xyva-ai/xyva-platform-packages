@@ -22,18 +22,52 @@ jobs:
           if ((git rev-parse HEAD) -ne '${{ github.event.pull_request.head.sha }}') { throw 'Head SHA mismatch' }
           New-Item -ItemType Directory -Path evidence -Force | Out-Null
           pwsh -NoProfile -NonInteractive -File spikes/windows-acl/WindowsAclProof.Tests.ps1 -EvidencePath evidence/windows-acl-evidence.json
+          if ($LASTEXITCODE -ne 0) { throw "ACL proof harness failed with exit code $LASTEXITCODE" }
           $evidence = Get-Content -LiteralPath evidence/windows-acl-evidence.json -Raw | ConvertFrom-Json
           if ($evidence.Commit -ne '${{ github.event.pull_request.head.sha }}') { throw 'Evidence commit SHA mismatch' }
-          $required = @(
+          $requiredPass = @(
+            'authorized-owner-read',
+            'cleanup-after-injected-verification-evidence',
+            'cleanup-after-injected-verification-failure',
+            'comparable-parent-access-control-setup',
+            'complete-dacl-and-owner-model',
+            'deterministic-directory-parent-swap-race-rejection',
+            'deterministic-parent-swap-race-rejection',
+            'directory-descriptor-failure-cleans-parent-handles',
+            'directory-handle-bound-acl',
+            'directory-handle-cleanup-allows-rename-and-remove',
+            'directory-hook-failure-cleans-parent-handles',
+            'directory-parent-chain-reparse-rejection',
+            'existing-directory-native-create-rejected',
+            'existing-target-native-create-rejected',
+            'fail-closed-null-missing-empty-and-manipulated-acl',
+            'file-hook-failure-cleans-parent-handles',
+            'handle-bound-acl-before-and-after-write',
+            'impersonated-token-not-administrator',
+            'impersonation-active-with-test-sid',
+            'native-empty-dacl-file',
+            'native-null-dacl-file',
+            'original-identity-restored',
+            'parent-chain-reparse-rejection',
+            'private-directory-create',
             'unprivileged-separate-process-access-controls',
             'race-unexpected-error-fails-closed',
-            'deterministic-parent-swap-race-rejection',
-            'deterministic-directory-parent-swap-race-rejection',
+            'timeout-fault-injection-evidence',
             'timeout-fault-injection-termination',
             'timeout-termination-failure-fails-closed',
-            'cleanup-after-injected-verification-failure'
+            'unprivileged-effective-access-controls',
+            'unprivileged-positive-control-create',
+            'unprivileged-positive-control-read',
+            'unprivileged-private-directory-create-denied',
+            'unprivileged-private-file-read-denied',
+            'unprivileged-private-file-write-denied',
+            'unprivileged-race-parent-swap-denied',
+            'unsafe-allow-rejected-S-1-1-0',
+            'unsafe-allow-rejected-S-1-5-11',
+            'unsafe-allow-rejected-S-1-5-32-545',
+            'unsafe-allow-rejected-S-1-5-32-546'
           )
-          foreach ($name in $required) {
+          foreach ($name in $requiredPass) {
             $result = @($evidence.Results | Where-Object Requirement -eq $name)
             if ($result.Count -ne 1 -or $result[0].Status -ne 'PASS') { throw "Required evidence is not PASS: $name" }
           }
@@ -42,8 +76,13 @@ jobs:
             'windows-11-arm64-native-identity',
             'native-missing-dacl-file'
           )
+          $expectedNames = @($requiredPass + $allowedNotExecuted)
           $resultNames = @($evidence.Results | ForEach-Object { [string]$_.Requirement })
-          if ($resultNames.Count -eq 0 -or @($resultNames | Select-Object -Unique).Count -ne $resultNames.Count) { throw 'Evidence contains missing or duplicate requirement names' }
+          if (@($expectedNames | Select-Object -Unique).Count -ne $expectedNames.Count) { throw 'Workflow result manifest contains duplicate requirement names' }
+          if ($resultNames.Count -ne $expectedNames.Count -or @($resultNames | Select-Object -Unique).Count -ne $resultNames.Count) { throw 'Evidence contains missing, additional, or duplicate requirement names' }
+          $missing = @($expectedNames | Where-Object { $_ -notin $resultNames })
+          $unexpected = @($resultNames | Where-Object { $_ -notin $expectedNames })
+          if ($missing.Count -ne 0 -or $unexpected.Count -ne 0) { throw "Evidence manifest mismatch: missing=$($missing -join ',');unexpected=$($unexpected -join ',')" }
           foreach ($result in @($evidence.Results)) {
             if ([string]::IsNullOrEmpty([string]$result.Requirement) -or [string]::IsNullOrEmpty([string]$result.Status)) { throw 'Evidence contains an incomplete result' }
             if ($result.Status -eq 'PASS') { continue }
@@ -54,7 +93,7 @@ jobs:
             $result = @($evidence.Results | Where-Object Requirement -eq $name)
             if ($result.Count -ne 1 -or $result[0].Status -ne 'NOT_EXECUTED') { throw "Expected platform limitation is missing or changed: $name" }
           }
-          if ($null -eq $evidence.Platform -or [string]::IsNullOrEmpty($evidence.Platform.OS) -or [string]::IsNullOrEmpty($evidence.Platform.ProcessArchitecture) -or [string]::IsNullOrEmpty($evidence.Platform.DeviceType)) { throw 'Platform evidence is incomplete' }
+          if ($null -eq $evidence.Platform -or [string]::IsNullOrEmpty($evidence.Platform.OS) -or $evidence.Platform.NativeOSArchitecture -ne 'X64' -or $evidence.Platform.ProcessArchitecture -ne 'X64' -or -not $evidence.Platform.ProcessIs64Bit -or $evidence.Platform.FixtureFileSystem -ne 'NTFS' -or [string]::IsNullOrEmpty($evidence.Platform.DeviceType)) { throw 'Platform evidence is incomplete or not native x64 NTFS' }
           if ($null -eq $evidence.SecondProcessEvidence -or $evidence.SecondProcessEvidence.ExitCode -ne 0 -or $evidence.SecondProcessEvidence.Pid -eq $evidence.SecondProcessEvidence.ParentPid -or $evidence.SecondProcessEvidence.Sid -ne $evidence.SecondProcessEvidence.ExpectedSid -or -not $evidence.SecondProcessEvidence.Cleanup) { throw 'Second-process evidence is incomplete' }
           foreach ($race in @($evidence.RaceEvidence, $evidence.DirectoryRaceEvidence)) {
             if ($null -eq $race -or -not $race.HookReached -or -not $race.BarrierReached -or [string]::IsNullOrEmpty($race.SwapPerformedBySid) -or -not $race.AttackerCleanup -or -not $race.ExternalUnchanged -or -not $race.Cleanup) { throw 'Race evidence is incomplete' }
