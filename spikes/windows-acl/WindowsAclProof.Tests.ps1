@@ -238,7 +238,7 @@ function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirec
 }
 
 function Invoke-RaceSwapProcess([string] $RaceRoot, [string] $Parent, [string] $Moved, [string] $Outside) {
-  $name = "xyva-race-" + [guid]::NewGuid().ToString('N').Substring(0, 11)
+  $name = "xyva-race-" + [guid]::NewGuid().ToString('N').Substring(0, 10)
   $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
   $user = $null
   try {
