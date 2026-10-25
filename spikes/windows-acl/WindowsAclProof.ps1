@@ -17,6 +17,7 @@ using System.IO;
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 public static class XyvaAclNative {
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -183,7 +184,19 @@ public static class XyvaAclNative {
     return RunProcessWithLogon(username, domain, password, application, commandLine, currentDirectory, 30000);
   }
   public static int RunProcessWithLogonTimeout(string username, string domain, string password, string application, string commandLine, string currentDirectory, uint timeoutMilliseconds) {
-    return RunProcessWithLogon(username, domain, password, application, commandLine, currentDirectory, timeoutMilliseconds);
+    STARTUPINFO startup = new STARTUPINFO(); startup.cb = Marshal.SizeOf(typeof(STARTUPINFO)); PROCESS_INFORMATION process;
+    StringBuilder mutableCommandLine = new StringBuilder(commandLine);
+    if (!CreateProcessWithLogonW(username, domain, password, 1, application, mutableCommandLine, 0x08000000, IntPtr.Zero, currentDirectory, ref startup, out process)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    try {
+      Thread.Sleep(checked((int)timeoutMilliseconds));
+      if (WaitForSingleObject(process.hProcess, 0) == 0) throw new TimeoutException(String.Format("pid={0};terminated=false;already-exited", process.dwProcessId));
+      if (!TerminateProcess(process.hProcess, 124)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      uint terminatedWait = WaitForSingleObject(process.hProcess, 5000);
+      if (terminatedWait != 0) throw new TimeoutException(String.Format("pid={0};terminated=false;wait={1}", process.dwProcessId, terminatedWait));
+      uint terminatedExitCode; if (!GetExitCodeProcess(process.hProcess, out terminatedExitCode)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      throw new TimeoutException(String.Format("pid={0};terminated=true;exitCode={1}", process.dwProcessId, terminatedExitCode));
+    }
+    finally { if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread); if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess); }
   }
   static void ThrowNtStatus(int status) { throw new Win32Exception((int)RtlNtStatusToDosError(status)); }
   static IntPtr OpenRelative(IntPtr root, string component, uint desiredAccess, uint createDisposition, uint createOptions, IntPtr securityDescriptor) {
