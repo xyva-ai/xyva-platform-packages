@@ -54,6 +54,7 @@ public static class XyvaAclNative {
   [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION { public IntPtr hProcess,hThread; public int dwProcessId,dwThreadId; }
   [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CreateProcessWithLogonW(string user, string domain, string password, uint logonFlags, string application, StringBuilder commandLine, uint creationFlags, IntPtr environment, string currentDirectory, ref STARTUPINFO startup, out PROCESS_INFORMATION process);
   [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool TerminateProcess(IntPtr handle, uint exitCode);
   [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr handle, out uint exitCode);
   [StructLayout(LayoutKind.Sequential)] struct UNICODE_STRING { public ushort Length, MaximumLength; public IntPtr Buffer; }
   [StructLayout(LayoutKind.Sequential)] struct OBJECT_ATTRIBUTES { public int Length; public IntPtr RootDirectory, ObjectName; public uint Attributes; public IntPtr SecurityDescriptor, SecurityQualityOfService; }
@@ -164,7 +165,16 @@ public static class XyvaAclNative {
     STARTUPINFO startup = new STARTUPINFO(); startup.cb = Marshal.SizeOf(typeof(STARTUPINFO)); PROCESS_INFORMATION process;
     StringBuilder mutableCommandLine = new StringBuilder(commandLine);
     if (!CreateProcessWithLogonW(username, domain, password, 1, application, mutableCommandLine, 0x08000000, IntPtr.Zero, currentDirectory, ref startup, out process)) throw new Win32Exception(Marshal.GetLastWin32Error());
-    try { if (WaitForSingleObject(process.hProcess, 30000) != 0) throw new TimeoutException("Second-process probe timed out"); uint exitCode; if (!GetExitCodeProcess(process.hProcess, out exitCode)) throw new Win32Exception(Marshal.GetLastWin32Error()); return unchecked((int)exitCode); }
+    try {
+      uint wait = WaitForSingleObject(process.hProcess, 30000);
+      if (wait == 0x00000102) {
+        if (!TerminateProcess(process.hProcess, 124)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (WaitForSingleObject(process.hProcess, 5000) != 0) throw new TimeoutException("Second-process probe did not terminate after timeout");
+        throw new TimeoutException("Second-process probe timed out and was terminated");
+      }
+      if (wait != 0) throw new Win32Exception((int)wait);
+      uint exitCode; if (!GetExitCodeProcess(process.hProcess, out exitCode)) throw new Win32Exception(Marshal.GetLastWin32Error()); return unchecked((int)exitCode);
+    }
     finally { if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread); if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess); }
   }
   static void ThrowNtStatus(int status) { throw new Win32Exception((int)RtlNtStatusToDosError(status)); }

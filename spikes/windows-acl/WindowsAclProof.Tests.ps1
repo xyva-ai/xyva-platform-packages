@@ -148,6 +148,16 @@ function Quote-ChildArgument([string] $Value) {
   return '"' + $Value + '"'
 }
 
+function Assert-LocalUserAbsent([string] $Name) {
+  try {
+    $existing = Get-LocalUser -Name $Name -ErrorAction Stop
+  } catch {
+    if ($_.Exception.Message -match '(?i)not found|cannot find|does not exist') { return }
+    throw
+  }
+  if ($null -ne $existing) { throw "Disposable account still exists: $Name" }
+}
+
 if ($ChildProbe) {
   $phase = 'process-started'
   $phases = [System.Collections.Generic.List[string]]::new()
@@ -185,6 +195,7 @@ function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirec
   $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
   $user = $null
   $token = $null
+  $cleanupVerified = $false
   $originalSid = Get-CurrentSid
   try {
     $user = New-LocalUser -Name $name -Password $password -AccountNeverExpires -ErrorAction Stop
@@ -228,19 +239,27 @@ function Test-UnprivilegedIdentity([string] $ControlFile, [string] $ControlDirec
       ExpectedSid = $user.SID.Value
       ExitCode = $child.ExitCode
       Phases = @($child.Phases)
-      Cleanup = $true
+      Cleanup = $false
     }
     Add-Result 'unprivileged-separate-process-access-controls' 'PASS' "child pid=$($child.Pid); parent pid=$($child.ParentPid); sid=$($child.Sid); phases=$(@($child.Phases) -join ',')"
   } finally {
     if ($null -ne $token) { $token.Dispose() }
-    if ($null -ne $user) { Remove-LocalUser -Name $name -ErrorAction SilentlyContinue }
+    if ($null -ne $user) {
+      Remove-LocalUser -Name $name -ErrorAction Stop
+      Assert-LocalUserAbsent $name
+    }
+    $cleanupVerified = $true
   }
+  if (-not $cleanupVerified -or $null -eq $script:SecondProcessEvidence) { throw 'Second-process cleanup was not verified' }
+  $script:SecondProcessEvidence | Add-Member -Force -NotePropertyName Cleanup -NotePropertyValue $true
 }
 
 function Invoke-RaceSwapProcess([string] $RaceRoot, [string] $Parent, [string] $Moved, [string] $Outside) {
   $name = "xyva-race-" + [guid]::NewGuid().ToString('N').Substring(0, 10)
   $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
   $user = $null
+  $cleanupVerified = $false
+  $evidence = $null
   try {
     $user = New-LocalUser -Name $name -Password $password -AccountNeverExpires -ErrorAction Stop
     Set-ControlAreaAcl $RaceRoot $true $true
@@ -257,10 +276,26 @@ function Invoke-RaceSwapProcess([string] $RaceRoot, [string] $Parent, [string] $
     }
     $evidence = Get-Content -LiteralPath $raceEvidencePath -Raw | ConvertFrom-Json
     if ($evidence.ExitCode -ne 0 -or $evidence.Pid -eq $PID -or $evidence.Sid -eq (Get-CurrentSid) -or $evidence.Administrator -or -not $evidence.Swapped) { throw 'Race attacker evidence validation failed' }
-    return $evidence
   } finally {
-    if ($null -ne $user) { Remove-LocalUser -Name $name -ErrorAction SilentlyContinue }
+    if ($null -ne $user) {
+      Remove-LocalUser -Name $name -ErrorAction Stop
+      Assert-LocalUserAbsent $name
+    }
+    $cleanupVerified = $true
   }
+  if (-not $cleanupVerified -or $null -eq $evidence) { throw 'Race attacker cleanup was not verified' }
+  $evidence | Add-Member -Force -NotePropertyName Cleanup -NotePropertyValue $true
+  return $evidence
+}
+
+function Assert-RaceEvidence($State, [string] $Moved, [string] $Leaf) {
+  if (-not $State.HookReached -or -not $State.BarrierReached -or [string]::IsNullOrEmpty($State.SwapPerformedBySid) -or $State.SwapPerformedBySid -eq (Get-CurrentSid) -or -not $State.ExternalUnchanged -or -not $State.AttackerCleanup -or -not $State.Cleanup) { throw 'Race evidence is incomplete or attacker identity is invalid' }
+  if ($State.Result -eq 'created-via-held-parent-handle') {
+    if (-not (Test-Path -LiteralPath (Join-Path $Moved $Leaf))) { throw 'Handle-bound race creation was not found in the moved original parent' }
+    return
+  }
+  if ($State.Result -like 'rejected:*' -and $null -ne $State.NativeErrorCode -and @([int]80, [int]183) -contains [int]$State.NativeErrorCode) { return }
+  throw 'Race result was not a permitted handle-bound create or explicitly allowed native rejection'
 }
 
 try {
@@ -366,11 +401,15 @@ try {
     Set-ControlAreaAcl $accessRoot $true
   }
   Invoke-RequiredTest 'unprivileged-effective-access-controls' { Test-UnprivilegedIdentity $controlFile $controlDirectory $impersonationPrivateFile $impersonationPrivateDirectory $raceProbeParent }
+  Invoke-RequiredTest 'race-unexpected-error-fails-closed' {
+    $unexpected = [pscustomobject]@{ HookReached = $true; BarrierReached = $true; SwapPerformedBySid = 'S-1-5-21-unexpected'; ExternalUnchanged = $true; Cleanup = $true; Result = 'rejected:RuntimeException'; NativeErrorCode = $null }
+    try { Assert-RaceEvidence $unexpected $root 'unexpected.txt'; throw 'Unexpected race error was accepted' } catch { if ($_.Exception.Message -notlike '*permitted handle-bound create*') { throw } }
+  }
   Invoke-RequiredTest 'deterministic-parent-swap-race-rejection' {
     $raceRoot = Join-Path $env:PUBLIC ("xyva-acl-race-" + [guid]::NewGuid())
     $outside = Join-Path $env:PUBLIC ("xyva-acl-race-outside-" + [guid]::NewGuid())
     $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape.txt'
-    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; Result = $null; ResultingParentHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
+    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; AttackerCleanup = $false; Result = $null; ResultingParentHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
     try {
       New-PrivateDirectory $raceRoot; New-PrivateDirectory $parent; [IO.Directory]::CreateDirectory($outside) | Out-Null
       $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
@@ -381,6 +420,7 @@ try {
         try {
           $attacker = Invoke-RaceSwapProcess $raceRoot $swapParent $swapMoved $swapOutside
           $raceState.SwapPerformedBySid = $attacker.Sid
+          $raceState.AttackerCleanup = $attacker.Cleanup
           $raceState.HookReached = $true
         } catch {
           $raceState.HookErrorType = $_.Exception.GetType().Name
@@ -400,8 +440,8 @@ try {
       if (-not $raceState.HookReached) { throw 'Race hook was not reached' }
       if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Race test sentinel was modified' }
       if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape.txt')) { throw 'Parent swap redirected native file creation outside validated path' }
-      if ($raceState.Result -eq 'created-via-held-parent-handle' -and -not (Test-Path -LiteralPath (Join-Path $moved 'must-not-escape.txt'))) { throw 'Handle-bound create did not remain in the original parent object' }
       $raceState.ExternalUnchanged = $true
+      Assert-RaceEvidence $raceState $moved 'must-not-escape.txt'
     } finally {
       $script:BeforePrivateCreateHook = $null
       if (Test-Path -LiteralPath $parent) { Remove-Item -LiteralPath $parent -Force }
@@ -415,7 +455,7 @@ try {
     $raceRoot = Join-Path $env:PUBLIC ("xyva-acl-directory-race-" + [guid]::NewGuid())
     $outside = Join-Path $env:PUBLIC ("xyva-acl-directory-race-outside-" + [guid]::NewGuid())
     $parent = Join-Path $raceRoot 'parent'; $moved = Join-Path $raceRoot 'parent-moved'; $target = Join-Path $parent 'must-not-escape'
-    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; Result = $null; ResultingDirectoryHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
+    $raceState = [ordered]@{ HookReached = $false; RootHandle = $null; ParentHandle = $null; BarrierReached = $false; SwapPerformedBySid = $null; AttackerCleanup = $false; Result = $null; ResultingDirectoryHandle = $null; ExternalUnchanged = $false; Cleanup = $false; HookErrorType = $null; HookErrorMessage = $null; NativeErrorCode = $null }
     try {
       New-PrivateDirectory $raceRoot | Out-Null; New-PrivateDirectory $parent | Out-Null; [IO.Directory]::CreateDirectory($outside) | Out-Null
       $sentinel = Join-Path $outside 'sentinel.txt'; [IO.File]::WriteAllText($sentinel, 'outside-sentinel')
@@ -426,6 +466,7 @@ try {
         try {
           $attacker = Invoke-RaceSwapProcess $raceRoot $swapParent $swapMoved $swapOutside
           $raceState.SwapPerformedBySid = $attacker.Sid
+          $raceState.AttackerCleanup = $attacker.Cleanup
           $raceState.HookReached = $true
         } catch { $raceState.HookErrorType = $_.Exception.GetType().Name; $raceState.HookErrorMessage = $_.Exception.Message; throw }
       }).GetNewClosure()
@@ -441,8 +482,8 @@ try {
       if (-not $raceState.HookReached) { throw 'Directory race hook was not reached' }
       if (([IO.File]::ReadAllText($sentinel)) -ne 'outside-sentinel') { throw 'Directory race test sentinel was modified' }
       if (Test-Path -LiteralPath (Join-Path $outside 'must-not-escape')) { throw 'Parent swap redirected native directory creation outside validated path' }
-      if ($raceState.Result -eq 'created-via-held-parent-handle' -and -not (Test-Path -LiteralPath (Join-Path $moved 'must-not-escape'))) { throw 'Handle-bound directory create did not remain in the original parent object' }
       $raceState.ExternalUnchanged = $true
+      Assert-RaceEvidence $raceState $moved 'must-not-escape'
     } finally {
       $script:BeforePrivateDirectoryCreateHook = $null
       if (Test-Path -LiteralPath $parent) { Remove-Item -LiteralPath $parent -Force }

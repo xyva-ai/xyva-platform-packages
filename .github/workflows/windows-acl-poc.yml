@@ -26,6 +26,7 @@ jobs:
           if ($evidence.Commit -ne '${{ github.event.pull_request.head.sha }}') { throw 'Evidence commit SHA mismatch' }
           $required = @(
             'unprivileged-separate-process-access-controls',
+            'race-unexpected-error-fails-closed',
             'deterministic-parent-swap-race-rejection',
             'deterministic-directory-parent-swap-race-rejection'
           )
@@ -35,7 +36,8 @@ jobs:
           }
           if ($null -eq $evidence.SecondProcessEvidence -or $evidence.SecondProcessEvidence.ExitCode -ne 0 -or $evidence.SecondProcessEvidence.Pid -eq $evidence.SecondProcessEvidence.ParentPid -or $evidence.SecondProcessEvidence.Sid -ne $evidence.SecondProcessEvidence.ExpectedSid -or -not $evidence.SecondProcessEvidence.Cleanup) { throw 'Second-process evidence is incomplete' }
           foreach ($race in @($evidence.RaceEvidence, $evidence.DirectoryRaceEvidence)) {
-            if ($null -eq $race -or -not $race.HookReached -or -not $race.BarrierReached -or [string]::IsNullOrEmpty($race.SwapPerformedBySid) -or -not $race.ExternalUnchanged -or -not $race.Cleanup) { throw 'Race evidence is incomplete' }
+            if ($null -eq $race -or -not $race.HookReached -or -not $race.BarrierReached -or [string]::IsNullOrEmpty($race.SwapPerformedBySid) -or -not $race.AttackerCleanup -or -not $race.ExternalUnchanged -or -not $race.Cleanup) { throw 'Race evidence is incomplete' }
+            if ($race.Result -ne 'created-via-held-parent-handle' -and ($race.Result -notlike 'rejected:*' -or @([int]80, [int]183) -notcontains [int]$race.NativeErrorCode)) { throw 'Race result is not fail-closed' }
           }
           $evidence | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath evidence/windows-acl-evidence.json -Encoding utf8NoBOM
           Get-Content -LiteralPath evidence/windows-acl-evidence.json -Raw
