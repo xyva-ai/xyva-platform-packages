@@ -22,11 +22,14 @@ if (process.platform !== 'win32') {
   }
 
   function swapRoot(root, moved, outside) {
-    execFileSync('pwsh.exe', [
-      '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-      'param($root,$moved,$outside) Move-Item -LiteralPath $root -Destination $moved; New-Item -ItemType Junction -Path $root -Target $outside | Out-Null',
-      root, moved, outside,
-    ], { windowsHide: true, timeout: 10_000, stdio: 'pipe' });
+    const script = path.join(__dirname, 'swap-parent.ps1');
+    const output = execFileSync('pwsh.exe', [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-File', script,
+      '-Root', root, '-Moved', moved, '-Outside', outside,
+    ], { windowsHide: true, timeout: 10_000, stdio: 'pipe' }).toString('utf8');
+    assert.match(output, /XYVA_PARENT_SWAP_OK/);
+    assert.equal(path.resolve(fs.realpathSync(root)), path.resolve(outside));
+    assert.equal(fs.existsSync(path.join(root, 'sentinel.txt')), true);
   }
 
   async function exerciseSwap(operation) {

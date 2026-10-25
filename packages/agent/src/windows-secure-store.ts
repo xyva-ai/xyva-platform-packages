@@ -14,6 +14,7 @@ export interface WindowsSecureStoreAddon {
   readPrivateFile(root: WindowsSecureStoreRoot, leaf: string): Buffer
   replacePrivateFile(root: WindowsSecureStoreRoot, temporaryLeaf: string, targetLeaf: string): void
   deletePrivateFile(root: WindowsSecureStoreRoot, leaf: string): void
+  hasPrivateDirectoryEntries(root: WindowsSecureStoreRoot): boolean
 }
 
 let loaded: WindowsSecureStoreAddon | undefined

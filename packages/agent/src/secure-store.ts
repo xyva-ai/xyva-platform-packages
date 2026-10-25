@@ -66,6 +66,30 @@ function windowsRootFor(filePath: string): { addon: WindowsSecureStoreAddon; roo
   return { addon, root, leaf }
 }
 
+function hasExistingSwarmData(): boolean {
+  const swarmDirectory = path.join(getSecureDataRoot(), 'swarm-credentials')
+  if (process.platform === 'win32') {
+    const addon = loadWindowsSecureStore()
+    const root = addon.ensureTrustedRoot(getSecureDataRoot())
+    try {
+      const swarmRoot = addon.openPrivateDirectory(root, 'swarm-credentials')
+      return addon.hasPrivateDirectoryEntries(swarmRoot)
+    } catch (error) {
+      if (nativeErrorCode(error) === 'XYVA_NOT_FOUND') return false
+      throw new SecureStoreError('XYVA_SECRET_INVALID', 'Swarm credential directory cannot be inspected safely.')
+    }
+  }
+
+  try {
+    assertPrivateDirectory(swarmDirectory)
+    return fs.readdirSync(swarmDirectory, { withFileTypes: true }).length > 0
+  } catch (error) {
+    if (isNotFound(error)) return false
+    if (error instanceof SecureStoreError) throw error
+    throw new SecureStoreError('XYVA_SECRET_INVALID', 'Swarm credential directory cannot be inspected safely.')
+  }
+}
+
 function enforcePrivatePermissions(filePath: string): void {
   if (process.platform === 'win32') return
   fs.chmodSync(filePath, 0o600)
@@ -183,6 +207,9 @@ function getMasterKey(): Buffer {
     if (raw?.includes(SEALED_PREFIX)) {
       throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key is missing while sealed data exists.')
     }
+  }
+  if (hasExistingSwarmData()) {
+    throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key is missing while swarm data exists.')
   }
   return createMasterKey()
 }

@@ -236,7 +236,7 @@ static napi_value OpenPrivateDirectory(napi_env env, napi_callback_info info) {
   Root* child = new Root();
   child->handle = OpenRelative(parent, leaf, XYVA_FILE_OPEN,
     XYVA_FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | XYVA_FILE_DIRECTORY_FILE,
-    0, SYNCHRONIZE | READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES);
+    0, SYNCHRONIZE | READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY);
   if (child->handle == INVALID_HANDLE_VALUE) {
     const DWORD error = GetLastError();
     delete child;
@@ -388,6 +388,34 @@ static napi_value DeletePrivateFile(napi_env env, napi_callback_info info) {
   napi_value undefined; napi_get_undefined(env, &undefined); return undefined;
 }
 
+static napi_value HasPrivateDirectoryEntries(napi_env env, napi_callback_info info) {
+  size_t count = 1;
+  napi_value args[1], receiver;
+  napi_get_cb_info(env, info, &count, args, &receiver, 0);
+  Root* root = count ? GetRoot(env, args[0]) : 0;
+  if (!root || count != 1) { Fail(env, "XYVA_INVALID_INPUT"); return 0; }
+
+  BYTE buffer[64 * 1024]{};
+  if (!GetFileInformationByHandleEx(root->handle, FileIdBothDirectoryInfo, buffer, sizeof(buffer))) {
+    const DWORD error = GetLastError();
+    if (error != ERROR_NO_MORE_FILES) { Fail(env, "XYVA_DIRECTORY_ENUMERATION_FAILED"); return 0; }
+    napi_value empty; napi_get_boolean(env, false, &empty); return empty;
+  }
+
+  BYTE* cursor = buffer;
+  while (true) {
+    const FILE_ID_BOTH_DIR_INFO* entry = reinterpret_cast<const FILE_ID_BOTH_DIR_INFO*>(cursor);
+    const std::wstring name(entry->FileName, entry->FileNameLength / sizeof(WCHAR));
+    if (name != L"." && name != L"..") {
+      napi_value present; napi_get_boolean(env, true, &present); return present;
+    }
+    if (entry->NextEntryOffset == 0) break;
+    cursor += entry->NextEntryOffset;
+    if (cursor >= buffer + sizeof(buffer)) { Fail(env, "XYVA_DIRECTORY_ENUMERATION_FAILED"); return 0; }
+  }
+  napi_value empty; napi_get_boolean(env, false, &empty); return empty;
+}
+
 #ifdef XYVA_TEST_BUILD
 static napi_value ConfigureTestBarrier(napi_env env, napi_callback_info info) {
   size_t count = 2;
@@ -491,6 +519,7 @@ NAPI_MODULE_INIT() {
     { "readPrivateFile", 0, ReadPrivateFile, 0, 0, 0, napi_default, 0 },
     { "replacePrivateFile", 0, ReplacePrivateFile, 0, 0, 0, napi_default, 0 },
     { "deletePrivateFile", 0, DeletePrivateFile, 0, 0, 0, napi_default, 0 },
+    { "hasPrivateDirectoryEntries", 0, HasPrivateDirectoryEntries, 0, 0, 0, napi_default, 0 },
 #ifdef XYVA_TEST_BUILD
     { "configureTestBarrier", 0, ConfigureTestBarrier, 0, 0, 0, napi_default, 0 },
     { "waitTestBarrier", 0, WaitTestBarrier, 0, 0, 0, napi_default, 0 },
