@@ -37,6 +37,23 @@ jobs:
             $result = @($evidence.Results | Where-Object Requirement -eq $name)
             if ($result.Count -ne 1 -or $result[0].Status -ne 'PASS') { throw "Required evidence is not PASS: $name" }
           }
+          $allowedNotExecuted = @(
+            'windows-11-device-identity',
+            'windows-11-arm64-native-identity',
+            'native-missing-dacl-file'
+          )
+          $resultNames = @($evidence.Results | ForEach-Object { [string]$_.Requirement })
+          if ($resultNames.Count -eq 0 -or @($resultNames | Select-Object -Unique).Count -ne $resultNames.Count) { throw 'Evidence contains missing or duplicate requirement names' }
+          foreach ($result in @($evidence.Results)) {
+            if ([string]::IsNullOrEmpty([string]$result.Requirement) -or [string]::IsNullOrEmpty([string]$result.Status)) { throw 'Evidence contains an incomplete result' }
+            if ($result.Status -eq 'PASS') { continue }
+            if ($result.Status -eq 'NOT_EXECUTED' -and $allowedNotExecuted -contains $result.Requirement) { continue }
+            throw "Unexpected non-PASS evidence: $($result.Requirement)=$($result.Status)"
+          }
+          foreach ($name in $allowedNotExecuted) {
+            $result = @($evidence.Results | Where-Object Requirement -eq $name)
+            if ($result.Count -ne 1 -or $result[0].Status -ne 'NOT_EXECUTED') { throw "Expected platform limitation is missing or changed: $name" }
+          }
           if ($null -eq $evidence.Platform -or [string]::IsNullOrEmpty($evidence.Platform.OS) -or [string]::IsNullOrEmpty($evidence.Platform.ProcessArchitecture) -or [string]::IsNullOrEmpty($evidence.Platform.DeviceType)) { throw 'Platform evidence is incomplete' }
           if ($null -eq $evidence.SecondProcessEvidence -or $evidence.SecondProcessEvidence.ExitCode -ne 0 -or $evidence.SecondProcessEvidence.Pid -eq $evidence.SecondProcessEvidence.ParentPid -or $evidence.SecondProcessEvidence.Sid -ne $evidence.SecondProcessEvidence.ExpectedSid -or -not $evidence.SecondProcessEvidence.Cleanup) { throw 'Second-process evidence is incomplete' }
           foreach ($race in @($evidence.RaceEvidence, $evidence.DirectoryRaceEvidence)) {
