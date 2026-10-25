@@ -317,7 +317,7 @@ function Invoke-RaceSwapProcess([string] $RaceRoot, [string] $Parent, [string] $
 }
 
 function Test-TimeoutFaultInjection {
-  $name = "xyva-timeout-" + [guid]::NewGuid().ToString('N').Substring(0, 10)
+  $name = "xyva-to-" + [guid]::NewGuid().ToString('N').Substring(0, 10)
   $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
   $user = $null
   $marker = Join-Path $root 'timeout-child.pid'
@@ -352,7 +352,7 @@ function Test-TimeoutFaultInjection {
 }
 
 function Test-CleanupAfterInjectedFailure {
-  $name = "xyva-cleanup-fault-" + [guid]::NewGuid().ToString('N').Substring(0, 10)
+  $name = "xyva-cf-" + [guid]::NewGuid().ToString('N').Substring(0, 10)
   $password = ConvertTo-SecureString (([guid]::NewGuid().ToString('N')) + '!xY') -AsPlainText -Force
   $user = $null
   $injected = $false
