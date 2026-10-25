@@ -93,8 +93,13 @@ static bool ApplyPrivateAcl(HANDLE handle) {
   BOOL present = FALSE;
   BOOL defaulted = FALSE;
   const bool parsed = GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) && present && dacl;
+  // Replacing the DACL alone leaves an inherited DACL unprotected.  The
+  // validator deliberately requires SE_DACL_PROTECTED, so set that control
+  // bit on the already-open handle before accepting a newly-created root.
   const DWORD result = parsed
-    ? SetSecurityInfo(handle, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, 0, 0, dacl, 0)
+    ? SetSecurityInfo(handle, SE_FILE_OBJECT,
+      DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+      0, 0, dacl, 0)
     : ERROR_INVALID_SECURITY_DESCR;
   LocalFree(descriptor);
   return result == ERROR_SUCCESS;
