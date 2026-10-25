@@ -18,10 +18,10 @@ offen. Es wurden keine künstlichen PASS-Ergebnisse erzeugt.
 ## B. Technischer Status
 
 - Branch: `codex/windows-acl-security-spike`
-- Head: `337b3652defd02732c9ad25c17b168a5ad91cf10`
+- Head: `33d0939628eed23aca2800cbf153eaa1480769b8`
 - Draft-PR: [#17](https://github.com/xyva-ai/xyva-platform-packages/pull/17)
-- CI: [Run 40192896236](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40192896236)
-- Artifact: `12598447792`, `windows-acl-evidence-40192896236`
+- CI: [Run 40194432687](https://github.com/xyva-ai/xyva-platform-packages/actions/runs/40194432687)
+- Artifact: `12599532087`, `windows-acl-evidence-40194432687`
 - Matrix: 40 `PASS`, 0 `FAIL`, 3 `NOT_EXECUTED`
 - Geänderte Branch-Dateien: `.github/workflows/windows-acl-poc.yml`,
   `spikes/windows-acl/WindowsAclProof.ps1`,

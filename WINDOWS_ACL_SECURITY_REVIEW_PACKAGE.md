@@ -2,7 +2,7 @@
 
 Status: `INTERNAL_SELF_REVIEW_ONLY`  
 Branch: `codex/windows-acl-security-spike`  
-Head: `337b3652defd02732c9ad25c17b168a5ad91cf10`  
+Head: `33d0939628eed23aca2800cbf153eaa1480769b8`  
 PR: [#17](https://github.com/xyva-ai/xyva-platform-packages/pull/17)
 
 ## Scope und Threat Model
