@@ -315,7 +315,7 @@ static napi_value ReplacePrivateFile(napi_env env, napi_callback_info info) {
   }
   HANDLE existing = OpenRelative(root, target, XYVA_FILE_OPEN,
     XYVA_FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | XYVA_FILE_NON_DIRECTORY_FILE,
-    0, READ_CONTROL | FILE_READ_ATTRIBUTES);
+    0, SYNCHRONIZE | READ_CONTROL | FILE_READ_ATTRIBUTES);
   if (existing != INVALID_HANDLE_VALUE) {
     const bool targetOk = IsNotReparsePoint(existing) && HasPrivateAcl(existing);
     CloseHandle(existing);
