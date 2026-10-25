@@ -28,7 +28,10 @@ if (process.platform !== 'win32') {
       '-Root', root, '-Moved', moved, '-Outside', outside,
     ], { windowsHide: true, timeout: 10_000, stdio: 'pipe' }).toString('utf8');
     assert.match(output, /XYVA_PARENT_SWAP_OK/);
-    assert.equal(fs.realpathSync(root), fs.realpathSync(outside));
+    const rootStat = fs.statSync(root);
+    const outsideStat = fs.statSync(outside);
+    assert.equal(rootStat.dev, outsideStat.dev);
+    assert.equal(rootStat.ino, outsideStat.ino);
     assert.equal(fs.existsSync(path.join(root, 'sentinel.txt')), true);
   }
 
