@@ -18,6 +18,7 @@ export default defineConfig({
       "tests/backend/agent-provider-config.test.ts",
       "tests/backend/agent-readiness.test.ts",
       "tests/backend/agent-security-hardening.test.ts",
+      "tests/backend/agent-windows-secure-store.test.ts",
       "tests/backend/agent-server.test.ts",
       "tests/backend/swarm-config-validation.test.ts",
       "tests/backend/provider-contracts-v1.test.ts",

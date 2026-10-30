@@ -56,7 +56,11 @@ describe("agent CLI authentication gate", () => {
     })
     expect(credentials.token).toMatch(/^sealed:v1:/)
     expect(fs.readFileSync(path.join(tempHome, ".xyva", "credentials.json"), "utf8")).not.toContain("ci-secret-token")
-    expect(fs.statSync(path.join(tempHome, ".xyva", "credentials.json")).mode & 0o777).toBe(0o600)
+    // Windows protection is represented by the native DACL, not POSIX mode
+    // bits. The native secure-store suite validates that DACL on this CI.
+    if (process.platform !== "win32") {
+      expect(fs.statSync(path.join(tempHome, ".xyva", "credentials.json")).mode & 0o777).toBe(0o600)
+    }
   })
 })
 

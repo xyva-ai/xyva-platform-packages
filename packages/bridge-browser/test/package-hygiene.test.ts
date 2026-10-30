@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -21,7 +21,17 @@ describe('published browser package hygiene', () => {
   })
 
   it('includes the Apache license, notice, readme and built entry in the tarball', () => {
-    const result = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+    const npmCli = [
+      process.env.npm_execpath,
+      resolve(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    ].find((candidate): candidate is string => typeof candidate === 'string' && existsSync(candidate))
+    const npmInvocation = process.platform === 'win32'
+      ? (() => {
+          if (!npmCli) throw new Error('npm CLI entrypoint is unavailable')
+          return { command: process.execPath, args: [npmCli, 'pack', '--dry-run', '--json'] }
+        })()
+      : { command: 'npm', args: ['pack', '--dry-run', '--json'] }
+    const result = execFileSync(npmInvocation.command, npmInvocation.args, {
       cwd: packageRoot,
       encoding: 'utf8',
     })

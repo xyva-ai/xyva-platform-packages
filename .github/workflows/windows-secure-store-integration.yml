@@ -1,0 +1,132 @@
+name: Windows secure-store integration evidence
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  integration-x64:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'ci:windows-secure-store-integration' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - name: Checkout the exact PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.23.1
+
+      - name: Build and test the native agent package
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ((git rev-parse HEAD) -ne $env:EXPECTED_SHA) { throw 'Head SHA mismatch' }
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'Visual C++ build tools unavailable' }
+          cmd /c "call `"$vs\Common7\Tools\VsDevCmd.bat`" -arch=x64 -host_arch=x64 && set" | ForEach-Object { if ($_ -match '^(.*?)=(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] } }
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
+          npm run build --workspace @xyva/agent
+          if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE" }
+          $env:XYVA_EVIDENCE_DIR = (New-Item -ItemType Directory evidence -Force).FullName
+          $testResults = [ordered]@{}
+          npx vitest run -c vitest.public.config.ts tests/backend/agent-windows-secure-store.test.ts
+          if ($LASTEXITCODE -ne 0) { throw "Node 22 integration vitest failed with exit code $LASTEXITCODE" }
+          $testResults.node22_adapter = 'PASS'
+          npx vitest run -c vitest.public.config.ts tests/backend/agent-security-hardening.test.ts -t "does not create a new master key when only swarm data remains"
+          if ($LASTEXITCODE -ne 0) { throw "Node 22 master-key regression failed with exit code $LASTEXITCODE" }
+          $testResults.node22_master_key = 'PASS'
+          node --expose-gc packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Node 22 parent-swap tests failed with exit code $LASTEXITCODE" }
+          $testResults.node22_parent_swap = 'PASS'
+          node --expose-gc --test-name-pattern "fresh trusted root has its private DACL" packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Node 22 root-ACL-before-write test failed with exit code $LASTEXITCODE" }
+          $testResults.node22_root_acl_before_write = 'PASS'
+          $testAddon = (Resolve-Path 'packages/agent/native/windows-secure-store/build/Release/xyva_windows_secure_store_test.node').Path
+          $fixtureBase = (New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ('xyva-secure-store-second-user-' + [guid]::NewGuid().ToString('N'))) -Force).FullName
+          $fixtureRoot = Join-Path $fixtureBase 'secure-root'
+          $controlDirectory = Join-Path $fixtureBase 'control'
+          $privateDirectory = Join-Path $fixtureRoot 'private-directory'
+          $privateFile = Join-Path $fixtureRoot 'private.json'
+          New-Item -ItemType Directory $controlDirectory | Out-Null
+          node -e "const [addonPath,root,file,dir]=process.argv.slice(1); const addon=require(addonPath); const trusted=addon.ensureTrustedRoot(root); addon.createPrivateFile(trusted,'private.json',Buffer.from('synthetic-only')); addon.createPrivateDirectory(trusted,'private-directory');" $testAddon $fixtureRoot $privateFile $privateDirectory
+          if ($LASTEXITCODE -ne 0) { throw "second-user fixture setup failed with exit code $LASTEXITCODE" }
+          $secondUserEvidence = Join-Path $env:XYVA_EVIDENCE_DIR 'second-user-process.json'
+          try {
+            & pwsh -NoLogo -NoProfile -NonInteractive -File packages/agent/native/windows-secure-store/test/run-second-user.ps1 -NodeExe (Get-Command node).Source -ChildScript (Resolve-Path 'packages/agent/native/windows-secure-store/test/second-user-child.cjs').Path -Addon $testAddon -Root $fixtureRoot -ControlDirectory $controlDirectory -PrivateFile $privateFile -PrivateDirectory $privateDirectory -EvidencePath $secondUserEvidence
+            $secondUserExit = $LASTEXITCODE
+          } finally {
+            if (Test-Path -LiteralPath $fixtureRoot) { Remove-Item -LiteralPath $fixtureRoot -Recurse -Force }
+          }
+          if ($secondUserExit -ne 0) { throw "Second-user process test failed with exit code $secondUserExit" }
+          $testResults.second_user_kernel_denials = 'PASS'
+          $binary = 'packages/agent/dist/native/win32-x64/xyva_windows_secure_store.node'
+          if (-not (Test-Path -LiteralPath $binary)) { throw 'Native package binary missing' }
+          @{ sha=(git rev-parse HEAD); node=(node --version); npm=(npm --version); architecture=$env:PROCESSOR_ARCHITECTURE; runner=$env:ImageOS; imageVersion=$env:ImageVersion; binarySha=(Get-FileHash -Algorithm SHA256 $binary).Hash; results=$testResults } | ConvertTo-Json -Depth 5 | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM
+          npm pack --workspace @xyva/agent --pack-destination evidence --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw "npm pack failed with exit code $LASTEXITCODE" }
+          $tarball = Get-ChildItem evidence/xyva-agent-*.tgz | Select-Object -First 1
+          if (-not $tarball) { throw 'Agent package tarball missing' }
+          $packageTest = Join-Path $env:RUNNER_TEMP ('xyva-agent-package-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory $packageTest | Out-Null
+          Push-Location $packageTest
+          try {
+            npm init -y | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "npm init failed with exit code $LASTEXITCODE" }
+            npm install $tarball.FullName --ignore-scripts --no-audit --no-fund
+            if ($LASTEXITCODE -ne 0) { throw "npm install failed with exit code $LASTEXITCODE" }
+            $env:XYVA_AGENT_STATE_DIR = Join-Path $packageTest 'state'
+            $env:XYVA_AGENT_TOKEN = 'synthetic-package-token'
+            $env:XYVA_AGENT_EMAIL = 'package@example.test'
+            node node_modules/@xyva/agent/dist/cli.js login --portal-url http://127.0.0.1:1
+            if ($LASTEXITCODE -ne 0) { throw "packaged agent login failed with exit code $LASTEXITCODE" }
+            if (-not (Test-Path -LiteralPath (Join-Path $env:XYVA_AGENT_STATE_DIR 'credentials.json'))) { throw 'Packaged agent did not persist credentials' }
+          } finally { Pop-Location; Remove-Item -LiteralPath $packageTest -Recurse -Force }
+
+      - name: Test the exact Node 22-built binary on Node 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+
+      - name: Re-run Windows integration tests on Node 24
+        shell: pwsh
+        run: |
+          npx vitest run -c vitest.public.config.ts tests/backend/agent-windows-secure-store.test.ts
+          if ($LASTEXITCODE -ne 0) { throw "Node 24 integration vitest failed with exit code $LASTEXITCODE" }
+          $evidence = Get-Content evidence/windows-secure-store-integration.json -Raw | ConvertFrom-Json
+          $evidence.results | Add-Member -Force -NotePropertyName node24_adapter -NotePropertyValue 'PASS'
+          npx vitest run -c vitest.public.config.ts tests/backend/agent-security-hardening.test.ts -t "does not create a new master key when only swarm data remains"
+          if ($LASTEXITCODE -ne 0) { throw "Node 24 master-key regression failed with exit code $LASTEXITCODE" }
+          $evidence.results | Add-Member -Force -NotePropertyName node24_master_key -NotePropertyValue 'PASS'
+          node --expose-gc packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Node 24 parent-swap tests failed with exit code $LASTEXITCODE" }
+          $evidence.results | Add-Member -Force -NotePropertyName node24_parent_swap -NotePropertyValue 'PASS'
+          node --expose-gc --test-name-pattern "fresh trusted root has its private DACL" packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Node 24 root-ACL-before-write test failed with exit code $LASTEXITCODE" }
+          $evidence.results | Add-Member -Force -NotePropertyName node24_root_acl_before_write -NotePropertyValue 'PASS'
+          if (-not (Test-Path -LiteralPath evidence/second-user-process.json)) { throw 'Second-user evidence missing' }
+          $evidence | Add-Member -NotePropertyName node24 -NotePropertyValue (node --version)
+          $evidence | ConvertTo-Json -Depth 5 | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM
+          Get-Content evidence/windows-secure-store-integration.json -Raw | ConvertFrom-Json | Out-Null
+
+      - name: Upload secret-free evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-secure-store-integration-${{ github.run_id }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 14
