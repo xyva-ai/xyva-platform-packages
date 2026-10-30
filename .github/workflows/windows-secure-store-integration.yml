@@ -79,7 +79,12 @@ jobs:
           $testResults.second_user_kernel_denials = 'PASS'
           $binary = 'packages/agent/dist/native/win32-x64/xyva_windows_secure_store.node'
           if (-not (Test-Path -LiteralPath $binary)) { throw 'Native package binary missing' }
-          @{ sha=(git rev-parse HEAD); node=(node --version); npm=(npm --version); architecture=$env:PROCESSOR_ARCHITECTURE; runner=$env:ImageOS; imageVersion=$env:ImageVersion; binarySha=(Get-FileHash -Algorithm SHA256 $binary).Hash; results=$testResults } | ConvertTo-Json -Depth 5 | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM
+          $testBinary = 'packages/agent/native/windows-secure-store/build/Release/xyva_windows_secure_store_test.node'
+          if (-not (Test-Path -LiteralPath $testBinary)) { throw 'Native secure-store test binary missing' }
+          $testBinaryEvidenceDir = New-Item -ItemType Directory -Path 'evidence/test-binary/win32-x64' -Force
+          $testBinaryEvidence = Join-Path $testBinaryEvidenceDir.FullName 'xyva_windows_secure_store_test.node'
+          Copy-Item -LiteralPath $testBinary -Destination $testBinaryEvidence -Force
+          @{ sha=(git rev-parse HEAD); node=(node --version); npm=(npm --version); architecture=$env:PROCESSOR_ARCHITECTURE; runner=$env:ImageOS; imageVersion=$env:ImageVersion; binarySha=(Get-FileHash -Algorithm SHA256 $binary).Hash; testBinarySha=(Get-FileHash -Algorithm SHA256 $testBinaryEvidence).Hash; results=$testResults } | ConvertTo-Json -Depth 5 | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM
           npm pack --workspace @xyva/agent --pack-destination evidence --ignore-scripts
           if ($LASTEXITCODE -ne 0) { throw "npm pack failed with exit code $LASTEXITCODE" }
           $tarball = Get-ChildItem evidence/xyva-agent-*.tgz | Select-Object -First 1
