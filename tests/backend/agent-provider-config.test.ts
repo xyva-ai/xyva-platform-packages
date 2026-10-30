@@ -16,13 +16,17 @@ import {
   saveProviderConfiguration,
   setFlowProviderGrant,
 } from '../../packages/agent/src/config.js'
+import { writePrivateFile } from '../../packages/agent/src/secure-store.js'
 
 const stateDirectories: string[] = []
 const previousStateDirectory = process.env.XYVA_AGENT_STATE_DIR
 
 function useIsolatedState(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-config-'))
-  stateDirectories.push(directory)
+  // The native Windows store must create and own the private state root; an
+  // already-created Temp child deliberately fails its inherited ACL preflight.
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-config-'))
+  const directory = path.join(parent, 'state')
+  stateDirectories.push(parent)
   process.env.XYVA_AGENT_STATE_DIR = directory
   return directory
 }
@@ -123,7 +127,7 @@ describe('agent provider configuration', () => {
       youtrackToken: null,
       port: 7900,
     })
-    fs.writeFileSync(configPath, malformed, { mode: 0o600 })
+    writePrivateFile(configPath, malformed)
 
     expect(() => saveProviderConfiguration({ providerId: 'ollama', defaultModel: 'gemma3:4b' })).toThrow(/refusing to overwrite/i)
     expect(() => setFlowProviderGrant('openai', true)).toThrow(/refusing to overwrite/i)
