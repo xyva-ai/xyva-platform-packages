@@ -21,7 +21,8 @@ describe('published browser package hygiene', () => {
   })
 
   it('includes the Apache license, notice, readme and built entry in the tarball', () => {
-    const result = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+    const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+    const result = execFileSync(npmCommand, ['pack', '--dry-run', '--json'], {
       cwd: packageRoot,
       encoding: 'utf8',
     })
