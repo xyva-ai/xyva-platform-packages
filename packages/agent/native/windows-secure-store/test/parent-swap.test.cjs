@@ -33,10 +33,10 @@ if (process.platform !== 'win32') {
       '-Root', root, '-Moved', moved, '-Outside', outside,
     ], { windowsHide: true, timeout: 10_000, stdio: 'pipe' }).toString('utf8');
     assert.match(output, /XYVA_PARENT_SWAP_OK/);
-    const rootStat = fs.statSync(root);
-    const outsideStat = fs.statSync(outside);
-    assert.equal(rootStat.dev, outsideStat.dev);
-    assert.equal(rootStat.ino, outsideStat.ino);
+    // Node's Windows stat().ino is not stable for a junction target on all
+    // supported Node releases. The PowerShell controller has already proved
+    // this path is a reparse-point junction; resolve the actual target instead.
+    assert.equal(fs.realpathSync.native(root).toLowerCase(), fs.realpathSync.native(outside).toLowerCase());
     assert.equal(fs.existsSync(path.join(root, 'sentinel.txt')), true);
   }
 
