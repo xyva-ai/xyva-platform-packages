@@ -1,5 +1,4 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -8,7 +7,7 @@ import type { AgentLicenseGuardStatus } from '@xyva/bridge-types'
 import type { AgentCredentials } from './auth.js'
 import { getXyvaDir } from './auth.js'
 import { verifyLicenseToken, type VerifiedLicenseClaims } from './license-signature.js'
-import { writePrivateFile } from './secure-store.js'
+import { deletePrivateFile, readPrivateFile, SecureStoreError, writePrivateFile } from './secure-store.js'
 
 export interface LicenseState {
   token: string | null
@@ -60,13 +59,10 @@ function getMachineIdPath() {
 }
 
 function readStoredLicense(): StoredLicenseFile | null {
+  const raw = readPrivateFile(getLicensePath())
+  if (raw === null) return null
   try {
-    const filePath = getLicensePath()
-    if (!fs.existsSync(filePath)) {
-      return null
-    }
-
-    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as StoredLicenseFile | string
+    const parsed = JSON.parse(raw) as StoredLicenseFile | string
     if (typeof parsed === 'string' && parsed.startsWith('XYVA-')) {
       return {
         version: 1,
@@ -85,11 +81,11 @@ function readStoredLicense(): StoredLicenseFile | null {
     ) {
       return parsed
     }
-  } catch {
-    // Corrupt or attacker-modified files are treated as missing.
+    throw new SecureStoreError('XYVA_SECRET_INVALID', 'Stored license has an unsupported format.')
+  } catch (error) {
+    if (error instanceof SecureStoreError) throw error
+    throw new SecureStoreError('XYVA_SECRET_INVALID', 'Stored license is unreadable; refusing to replace it.')
   }
-
-  return null
 }
 
 function writeStoredLicense(state: StoredLicenseFile) {
@@ -98,21 +94,22 @@ function writeStoredLicense(state: StoredLicenseFile) {
 
 function removeStoredLicense() {
   try {
-    fs.rmSync(getLicensePath(), { force: true })
+    deletePrivateFile(getLicensePath())
   } catch {
     // The in-memory result still fails closed if cleanup is unavailable.
   }
 }
 
 function readPersistedMachineId(): string | null {
+  const raw = readPrivateFile(getMachineIdPath())
+  if (raw === null) return null
   try {
-    const parsed = JSON.parse(fs.readFileSync(getMachineIdPath(), 'utf8')) as { version?: number; machineId?: string }
-    return parsed.version === 1 && typeof parsed.machineId === 'string' && /^[a-f0-9-]{32,64}$/i.test(parsed.machineId)
-      ? parsed.machineId
-      : null
-  } catch {
-    return null
+    const parsed = JSON.parse(raw) as { version?: number; machineId?: string }
+    if (parsed.version === 1 && typeof parsed.machineId === 'string' && /^[a-f0-9-]{32,64}$/i.test(parsed.machineId)) return parsed.machineId
+  } catch (error) {
+    if (error instanceof SecureStoreError) throw error
   }
+  throw new SecureStoreError('XYVA_SECRET_INVALID', 'Stored machine identity is invalid; refusing to replace it.')
 }
 
 function persistMachineId(machineId: string): string {
