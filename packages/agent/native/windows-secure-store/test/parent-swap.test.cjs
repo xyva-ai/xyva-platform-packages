@@ -148,6 +148,25 @@ if (process.platform !== 'win32') {
     }
   });
 
+  test('rejects a junction in the trusted root parent chain', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-secure-store-parent-junction-'));
+    const junctionParent = path.join(base, 'parent');
+    const outside = path.join(base, 'outside');
+    const root = path.join(junctionParent, 'state');
+    try {
+      fs.mkdirSync(outside);
+      execFileSync('pwsh.exe', [
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+        'New-Item -ItemType Junction -Path $args[0] -Target $args[1] | Out-Null',
+        junctionParent, outside,
+      ], { windowsHide: true, timeout: 10_000, stdio: 'pipe' });
+      assert.throws(() => addon.ensureTrustedRoot(root), (error) => error?.code === 'XYVA_ROOT_PARENT_UNSAFE');
+      assert.equal(fs.existsSync(path.join(outside, 'state')), false);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   test('handle-relative read stays in the opened root across a junction swap', { timeout: 30_000 }, () => exerciseSwap('read'));
   test('handle-relative delete stays in the opened root across a junction swap', { timeout: 30_000 }, () => exerciseSwap('delete'));
 }

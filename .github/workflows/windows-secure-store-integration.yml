@@ -56,6 +56,9 @@ jobs:
           node --expose-gc --test-name-pattern "fresh trusted root has its private DACL" packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
           if ($LASTEXITCODE -ne 0) { throw "Node 22 root-ACL-before-write test failed with exit code $LASTEXITCODE" }
           $testResults.node22_root_acl_before_write = 'PASS'
+          node --expose-gc --test-name-pattern "rejects a junction in the trusted root parent chain" packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Node 22 parent-chain junction test failed with exit code $LASTEXITCODE" }
+          $testResults.node22_parent_chain_junction = 'PASS'
           $testAddon = (Resolve-Path 'packages/agent/native/windows-secure-store/build/Release/xyva_windows_secure_store_test.node').Path
           $fixtureBase = (New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP ('xyva-secure-store-second-user-' + [guid]::NewGuid().ToString('N'))) -Force).FullName
           $fixtureRoot = Join-Path $fixtureBase 'secure-root'
@@ -118,6 +121,9 @@ jobs:
           node --expose-gc --test-name-pattern "fresh trusted root has its private DACL" packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
           if ($LASTEXITCODE -ne 0) { throw "Node 24 root-ACL-before-write test failed with exit code $LASTEXITCODE" }
           $evidence.results | Add-Member -Force -NotePropertyName node24_root_acl_before_write -NotePropertyValue 'PASS'
+          node --expose-gc --test-name-pattern "rejects a junction in the trusted root parent chain" packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Node 24 parent-chain junction test failed with exit code $LASTEXITCODE" }
+          $evidence.results | Add-Member -Force -NotePropertyName node24_parent_chain_junction -NotePropertyValue 'PASS'
           if (-not (Test-Path -LiteralPath evidence/second-user-process.json)) { throw 'Second-user evidence missing' }
           $evidence | Add-Member -NotePropertyName node24 -NotePropertyValue (node --version)
           $evidence | ConvertTo-Json -Depth 5 | Set-Content evidence/windows-secure-store-integration.json -Encoding utf8NoBOM

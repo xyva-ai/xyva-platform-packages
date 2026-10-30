@@ -21,6 +21,7 @@ extern "C" ULONG NTAPI RtlNtStatusToDosError(NTSTATUS);
 #define XYVA_OBJ_DONT_REPARSE 0x1000L
 #define XYVA_FILE_OPEN 1L
 #define XYVA_FILE_CREATE 2L
+#define XYVA_FILE_OPEN_IF 3L
 #define XYVA_FILE_RENAME_INFORMATION_CLASS 10L
 #define XYVA_FILE_DISPOSITION_INFORMATION_CLASS 13L
 #define XYVA_FILE_DIRECTORY_FILE 1L
@@ -34,6 +35,22 @@ struct Root {
   HANDLE handle = INVALID_HANDLE_VALUE;
   ~Root() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
 };
+
+static bool IsLeaf(const std::wstring& leaf);
+
+static bool SplitAbsoluteDrivePath(const std::wstring& path, std::vector<std::wstring>* components) {
+  if (path.size() < 4 || path[1] != L':' || (path[2] != L'\\' && path[2] != L'/')) return false;
+  size_t cursor = 3;
+  while (cursor < path.size()) {
+    const size_t next = path.find_first_of(L"\\\\/", cursor);
+    const std::wstring component = path.substr(cursor, next == std::wstring::npos ? std::wstring::npos : next - cursor);
+    if (!IsLeaf(component)) return false;
+    components->push_back(component);
+    if (next == std::wstring::npos) break;
+    cursor = next + 1;
+  }
+  return !components->empty();
+}
 
 #ifdef XYVA_TEST_BUILD
 struct Barrier {
@@ -186,28 +203,44 @@ static napi_value EnsureTrustedRoot(napi_env env, napi_callback_info info) {
   napi_value args[1], receiver;
   napi_get_cb_info(env, info, &count, args, &receiver, 0);
   std::wstring rootPath;
-  if (count != 1 || !String(env, args[0], &rootPath) || rootPath.rfind(L"\\\\", 0) == 0 || rootPath.find(L':') != 1) {
+  std::vector<std::wstring> components;
+  if (count != 1 || !String(env, args[0], &rootPath) || rootPath.rfind(L"\\\\", 0) == 0 || !SplitAbsoluteDrivePath(rootPath, &components)) {
     Fail(env, "XYVA_INVALID_ROOT"); return 0;
+  }
+  // Open existing parents by handle. A component exchanged for a junction
+  // after this point cannot redirect private-root creation.
+  Root parent;
+  const std::wstring volume = rootPath.substr(0, 3);
+  parent.handle = CreateFileW(volume.c_str(), READ_CONTROL | FILE_READ_ATTRIBUTES,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, 0);
+  if (parent.handle == INVALID_HANDLE_VALUE || !IsNotReparsePoint(parent.handle)) {
+    Fail(env, "XYVA_ROOT_PARENT_UNSAFE"); return 0;
+  }
+  for (size_t index = 0; index + 1 < components.size(); ++index) {
+    HANDLE child = OpenRelative(&parent, components[index], XYVA_FILE_OPEN,
+      XYVA_FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | XYVA_FILE_DIRECTORY_FILE,
+      0, SYNCHRONIZE | READ_CONTROL | FILE_READ_ATTRIBUTES);
+    if (child == INVALID_HANDLE_VALUE || !IsNotReparsePoint(child)) {
+      if (child != INVALID_HANDLE_VALUE) CloseHandle(child);
+      Fail(env, "XYVA_ROOT_PARENT_UNSAFE"); return 0;
+    }
+    CloseHandle(parent.handle);
+    parent.handle = child;
   }
   // The state root is the first private object in the chain.  It must be born
   // with the private owner and protected DACL: creating it with inherited ACLs
   // and hardening it afterwards leaves an observable TOCTOU window.
   PSECURITY_DESCRIPTOR descriptor = PrivateDescriptor();
   if (!descriptor) { Fail(env, "XYVA_SECURITY_DESCRIPTOR_FAILED"); return 0; }
-  SECURITY_ATTRIBUTES attributes{};
-  attributes.nLength = sizeof(attributes);
-  attributes.lpSecurityDescriptor = descriptor;
-  attributes.bInheritHandle = FALSE;
-  bool created = CreateDirectoryW(rootPath.c_str(), &attributes) != FALSE;
-  LocalFree(descriptor);
-  if (!created && GetLastError() != ERROR_ALREADY_EXISTS) { Fail(env, "XYVA_ROOT_CREATE_FAILED"); return 0; }
   Root* root = new Root();
-  root->handle = CreateFileW(rootPath.c_str(), READ_CONTROL | FILE_READ_ATTRIBUTES,
-    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING,
-    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, 0);
+  root->handle = OpenRelative(&parent, components.back(), XYVA_FILE_OPEN_IF,
+    XYVA_FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT | XYVA_FILE_DIRECTORY_FILE,
+    descriptor, SYNCHRONIZE | READ_CONTROL | FILE_READ_ATTRIBUTES);
+  LocalFree(descriptor);
   if (root->handle == INVALID_HANDLE_VALUE || !IsNotReparsePoint(root->handle) || !HasPrivateAcl(root->handle)) {
     delete root;
-    Fail(env, created ? "XYVA_ROOT_INITIALIZATION_FAILED" : "XYVA_INSECURE_ROOT"); return 0;
+    Fail(env, "XYVA_INSECURE_ROOT"); return 0;
   }
   napi_value external;
   napi_create_external(env, root, [](napi_env, void* value, void*) { delete static_cast<Root*>(value); }, 0, &external);
