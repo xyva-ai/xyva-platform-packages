@@ -157,9 +157,17 @@ if (process.platform !== 'win32') {
       fs.mkdirSync(outside);
       execFileSync('pwsh.exe', [
         '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-        'New-Item -ItemType Junction -Path $args[0] -Target $args[1] | Out-Null',
-        junctionParent, outside,
-      ], { windowsHide: true, timeout: 10_000, stdio: 'pipe' });
+        'New-Item -ItemType Junction -Path $env:XYVA_TEST_JUNCTION_PARENT -Target $env:XYVA_TEST_JUNCTION_OUTSIDE | Out-Null',
+      ], {
+        windowsHide: true,
+        timeout: 10_000,
+        stdio: 'pipe',
+        env: {
+          ...process.env,
+          XYVA_TEST_JUNCTION_PARENT: junctionParent,
+          XYVA_TEST_JUNCTION_OUTSIDE: outside,
+        },
+      });
       assert.throws(() => addon.ensureTrustedRoot(root), (error) => error?.code === 'XYVA_ROOT_PARENT_UNSAFE');
       assert.equal(fs.existsSync(path.join(outside, 'state')), false);
     } finally {
