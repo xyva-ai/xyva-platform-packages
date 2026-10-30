@@ -40,16 +40,16 @@ afterEach(() => {
 })
 
 function configureOpenAi(): void {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-bridge-'))
-  stateDirectories.push(directory)
-  process.env.XYVA_AGENT_STATE_DIR = directory
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-bridge-'))
+  stateDirectories.push(parent)
+  process.env.XYVA_AGENT_STATE_DIR = path.join(parent, 'state')
   saveProviderConfiguration({ providerId: 'openai', defaultModel: 'gpt-5', apiKey: 'stored-openai-key' })
 }
 
 function configureAllProviders(): void {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-parity-'))
-  stateDirectories.push(directory)
-  process.env.XYVA_AGENT_STATE_DIR = directory
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-parity-'))
+  stateDirectories.push(parent)
+  process.env.XYVA_AGENT_STATE_DIR = path.join(parent, 'state')
   saveProviderConfiguration({ providerId: 'ollama', defaultModel: 'qwen2.5-coder:7b-instruct' })
   saveProviderConfiguration({ providerId: 'lmstudio', defaultModel: 'local-model' })
   saveProviderConfiguration({ providerId: 'openai', defaultModel: 'gpt-5', apiKey: 'stored-openai-key' })
