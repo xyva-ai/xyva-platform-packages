@@ -134,6 +134,20 @@ if (process.platform !== 'win32') {
     }
   });
 
+  test('fresh trusted root has its private DACL before the first private write', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-secure-store-root-acl-'));
+    const root = path.join(base, 'trusted-root');
+    try {
+      const trusted = addon.ensureTrustedRoot(root);
+      assert.equal(addon.testPrivateAcl(trusted), true);
+      assert.equal(fs.existsSync(path.join(root, 'private.json')), false);
+      addon.createPrivateFile(trusted, 'private.json', Buffer.from('synthetic-only'));
+      assert.equal(addon.testPrivateAcl(trusted), true);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
   test('handle-relative read stays in the opened root across a junction swap', { timeout: 30_000 }, () => exerciseSwap('read'));
   test('handle-relative delete stays in the opened root across a junction swap', { timeout: 30_000 }, () => exerciseSwap('delete'));
 }

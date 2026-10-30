@@ -106,28 +106,6 @@ static PSECURITY_DESCRIPTOR PrivateDescriptor() {
   return ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), 1, &descriptor, 0) ? descriptor : 0;
 }
 
-static bool ApplyPrivateSecurity(HANDLE handle) {
-  PSECURITY_DESCRIPTOR descriptor = PrivateDescriptor();
-  if (!descriptor) return false;
-  PACL dacl = 0;
-  PSID owner = 0;
-  BOOL present = FALSE;
-  BOOL defaulted = FALSE;
-  const bool daclParsed = GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) && present && dacl;
-  const bool ownerParsed = GetSecurityDescriptorOwner(descriptor, &owner, &defaulted) && owner;
-  // A directory created by an elevated token can initially be owned by the
-  // Administrators group.  Apply the descriptor's explicit process-user owner
-  // and protected DACL to the already-open handle, then verify both before it
-  // becomes a trusted capability.
-  const DWORD result = daclParsed && ownerParsed
-    ? SetSecurityInfo(handle, SE_FILE_OBJECT,
-      OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-      owner, 0, dacl, 0)
-    : ERROR_INVALID_SECURITY_DESCR;
-  LocalFree(descriptor);
-  return result == ERROR_SUCCESS;
-}
-
 static bool HasPrivateAcl(HANDLE handle) {
   PSECURITY_DESCRIPTOR descriptor = 0;
   PSID owner = 0;
@@ -211,13 +189,23 @@ static napi_value EnsureTrustedRoot(napi_env env, napi_callback_info info) {
   if (count != 1 || !String(env, args[0], &rootPath) || rootPath.rfind(L"\\\\", 0) == 0 || rootPath.find(L':') != 1) {
     Fail(env, "XYVA_INVALID_ROOT"); return 0;
   }
-  bool created = CreateDirectoryW(rootPath.c_str(), 0) != FALSE;
+  // The state root is the first private object in the chain.  It must be born
+  // with the private owner and protected DACL: creating it with inherited ACLs
+  // and hardening it afterwards leaves an observable TOCTOU window.
+  PSECURITY_DESCRIPTOR descriptor = PrivateDescriptor();
+  if (!descriptor) { Fail(env, "XYVA_SECURITY_DESCRIPTOR_FAILED"); return 0; }
+  SECURITY_ATTRIBUTES attributes{};
+  attributes.nLength = sizeof(attributes);
+  attributes.lpSecurityDescriptor = descriptor;
+  attributes.bInheritHandle = FALSE;
+  bool created = CreateDirectoryW(rootPath.c_str(), &attributes) != FALSE;
+  LocalFree(descriptor);
   if (!created && GetLastError() != ERROR_ALREADY_EXISTS) { Fail(env, "XYVA_ROOT_CREATE_FAILED"); return 0; }
   Root* root = new Root();
-  root->handle = CreateFileW(rootPath.c_str(), READ_CONTROL | WRITE_OWNER | WRITE_DAC | FILE_READ_ATTRIBUTES,
+  root->handle = CreateFileW(rootPath.c_str(), READ_CONTROL | FILE_READ_ATTRIBUTES,
     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0, OPEN_EXISTING,
     FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, 0);
-  if (root->handle == INVALID_HANDLE_VALUE || !IsNotReparsePoint(root->handle) || (created && !ApplyPrivateSecurity(root->handle)) || !HasPrivateAcl(root->handle)) {
+  if (root->handle == INVALID_HANDLE_VALUE || !IsNotReparsePoint(root->handle) || !HasPrivateAcl(root->handle)) {
     delete root;
     Fail(env, created ? "XYVA_ROOT_INITIALIZATION_FAILED" : "XYVA_INSECURE_ROOT"); return 0;
   }
@@ -507,6 +495,17 @@ static napi_value TestCurrentToken(napi_env env, napi_callback_info info) {
   napi_set_named_property(env, result, "administrator", value);
   return result;
 }
+
+static napi_value TestPrivateAcl(napi_env env, napi_callback_info info) {
+  size_t count = 1;
+  napi_value args[1], receiver;
+  napi_get_cb_info(env, info, &count, args, &receiver, 0);
+  Root* root = count ? GetRoot(env, args[0]) : 0;
+  if (!root || count != 1) { Fail(env, "XYVA_INVALID_INPUT"); return 0; }
+  napi_value result;
+  napi_get_boolean(env, HasPrivateAcl(root->handle), &result);
+  return result;
+}
 #endif
 
 NAPI_MODULE_INIT() {
@@ -528,6 +527,7 @@ NAPI_MODULE_INIT() {
     { "testProbeWrite", 0, TestProbeWrite, 0, 0, 0, napi_default, 0 },
     { "testProbeCreateDirectory", 0, TestProbeCreateDirectory, 0, 0, 0, napi_default, 0 },
     { "testCurrentToken", 0, TestCurrentToken, 0, 0, 0, napi_default, 0 },
+    { "testPrivateAcl", 0, TestPrivateAcl, 0, 0, 0, napi_default, 0 },
 #endif
   };
   napi_define_properties(env, exports, sizeof(properties) / sizeof(properties[0]), properties);
