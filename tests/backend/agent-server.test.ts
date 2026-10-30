@@ -17,6 +17,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import WebSocket from "ws"
+import { writePrivateFile } from "../../packages/agent/src/secure-store.js"
 
 const PORT = 7902
 const BASE = `http://127.0.0.1:${PORT}`
@@ -32,6 +33,8 @@ const agentPackageJson = JSON.parse(
 ) as { version: string }
 
 let tmpHome: string
+let stateDirectory: string
+const previousStateDirectory = process.env.XYVA_AGENT_STATE_DIR
 let proc: ChildProcess | null = null
 let agentStdout = ""
 let qaPairingToken = ""
@@ -211,12 +214,15 @@ beforeAll(async () => {
 
   await startMockPortal()
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "xyva-agent-test-"))
-  // Pre-seed credentials so the CLI does not try the loginFlow listener.
-  fs.mkdirSync(path.join(tmpHome, ".xyva"), { recursive: true, mode: 0o700 })
+  // Pre-seed through the same primitive as production. In particular, do not
+  // create an inherited-ACL Windows state directory before the native store
+  // can harden it.
+  stateDirectory = path.join(tmpHome, "state")
+  process.env.XYVA_AGENT_STATE_DIR = stateDirectory
   const machineId = crypto.randomUUID()
   signedLicenseToken = signTestLicense(machineId)
-  fs.writeFileSync(path.join(tmpHome, ".xyva", "machine-id.json"), JSON.stringify({ version: 1, machineId }), { mode: 0o600 })
-  fs.writeFileSync(path.join(tmpHome, ".xyva", "license.json"), JSON.stringify({
+  writePrivateFile(path.join(stateDirectory, "machine-id.json"), JSON.stringify({ version: 1, machineId }))
+  writePrivateFile(path.join(stateDirectory, "license.json"), JSON.stringify({
     version: 2,
     source: "jwt",
     token: signedLicenseToken,
@@ -226,23 +232,23 @@ beforeAll(async () => {
     offlineSince: null,
     machineId,
     portalUrl: mockPortalUrl,
-  }), { mode: 0o600 })
+  }))
   const creds = {
     token: "test-fixture-token-not-real",
     email: "fixture@xyva.test",
     expiresAt: Date.now() + 60 * 60 * 1000,
     portalUrl: mockPortalUrl,
   }
-  fs.writeFileSync(
-    path.join(tmpHome, ".xyva", "credentials.json"),
+  writePrivateFile(
+    path.join(stateDirectory, "credentials.json"),
     JSON.stringify(creds, null, 2),
-    { mode: 0o600 },
   )
 
   const env = {
     ...process.env,
     HOME: tmpHome,
     USERPROFILE: tmpHome,
+    XYVA_AGENT_STATE_DIR: stateDirectory,
     XYVA_AGENT_MODE: "advisor",
     XYVA_AGENT_SKIP_BROWSER_REPAIR: "1",
     XYVA_AGENT_WS_AUTH_TIMEOUT_MS: "250",
@@ -295,6 +301,7 @@ afterAll(async () => {
   if (tmpHome && fs.existsSync(tmpHome)) {
     fs.rmSync(tmpHome, { recursive: true, force: true })
   }
+  process.env.XYVA_AGENT_STATE_DIR = previousStateDirectory
   if (mockPortal?.listening) {
     await new Promise<void>((resolve) => mockPortal?.close(() => resolve()))
   }
