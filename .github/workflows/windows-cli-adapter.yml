@@ -105,6 +105,7 @@ jobs:
           tests/backend/provider-contracts-v1.test.ts
           tests/backend/provider-bridge-client-v1.test.ts
           tests/backend/agent-security-hardening.test.ts
+          tests/backend/agent-windows-secure-store.test.ts
 
       - name: Build, typecheck, and test public packages
         shell: pwsh
