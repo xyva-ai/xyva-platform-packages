@@ -13,6 +13,11 @@ if (process.platform !== 'win32') {
 } else {
   const addonPath = path.join(__dirname, '..', 'build', 'Release', 'xyva_windows_secure_store_test.node');
   const addon = require(addonPath);
+  const systemPowerShell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+
+  if (!fs.existsSync(systemPowerShell)) {
+    throw new Error(`Required Windows PowerShell executable is unavailable: ${systemPowerShell}`);
+  }
 
   function message(worker) {
     return new Promise((resolve, reject) => {
@@ -23,7 +28,7 @@ if (process.platform !== 'win32') {
 
   function swapRoot(root, moved, outside) {
     const script = path.join(__dirname, 'swap-parent.ps1');
-    const output = execFileSync('pwsh.exe', [
+    const output = execFileSync(systemPowerShell, [
       '-NoLogo', '-NoProfile', '-NonInteractive', '-File', script,
       '-Root', root, '-Moved', moved, '-Outside', outside,
     ], { windowsHide: true, timeout: 10_000, stdio: 'pipe' }).toString('utf8');
@@ -155,7 +160,7 @@ if (process.platform !== 'win32') {
     const root = path.join(junctionParent, 'state');
     try {
       fs.mkdirSync(outside);
-      execFileSync('pwsh.exe', [
+      execFileSync(systemPowerShell, [
         '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
         'New-Item -ItemType Junction -Path $env:XYVA_TEST_JUNCTION_PARENT -Target $env:XYVA_TEST_JUNCTION_OUTSIDE | Out-Null',
       ], {
