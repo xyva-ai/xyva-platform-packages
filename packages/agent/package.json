@@ -51,10 +51,11 @@
     "@types/express": "^5.0.3",
     "@types/ws": "^8.18.1",
     "tsup": "^8.5.0",
-    "tsx": "^4.20.6"
+    "tsx": "^4.20.6",
+    "node-gyp": "13.1.0"
   },
   "scripts": {
-    "build": "npm run build --workspace @xyva/contracts && npm run build --workspace @xyva/bridge-types && tsup src/index.ts src/cli.ts --format esm --dts --outDir dist --clean --external playwright --external playwright-core --external chromium-bidi --external @axe-core/playwright --external axe-core --external @xyva/contracts",
+    "build": "npm run build --workspace @xyva/contracts && npm run build --workspace @xyva/bridge-types && tsup src/index.ts src/cli.ts --format esm --dts --outDir dist --clean --external playwright --external playwright-core --external chromium-bidi --external @axe-core/playwright --external axe-core --external @xyva/contracts && node scripts/build-windows-secure-store.mjs",
     "dev": "npm run build --workspace @xyva/bridge-types && tsx src/cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "prepublishOnly": "npm run build"

@@ -1,11 +1,10 @@
 import crypto from 'node:crypto'
 import { createServer, type Server } from 'node:http'
-import fs from 'node:fs'
 import path from 'node:path'
 
 import open from 'open'
 
-import { isSealedSecret, sealSecret, unsealSecret, writePrivateFile } from './secure-store.js'
+import { deletePrivateFile, isSealedSecret, readPrivateFile, sealSecret, SecureStoreError, unsealSecret, writePrivateFile } from './secure-store.js'
 import { getAgentDataRoot } from './utils/platform.js'
 
 const DEFAULT_PORTAL_URL = process.env.XYVA_PORTAL_URL || 'https://xyva.ai'
@@ -42,11 +41,12 @@ export function getCredentialsPath(): string {
 export function loadCredentials(): AgentCredentials | null {
   try {
     const filePath = getCredentialsPath()
-    if (!fs.existsSync(filePath)) {
+    const raw = readPrivateFile(filePath)
+    if (raw === null) {
       return null
     }
 
-    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Partial<StoredAgentCredentials>
+    const parsed = JSON.parse(raw) as Partial<StoredAgentCredentials>
     const token = typeof parsed.token === 'string'
       ? (isSealedSecret(parsed.token) ? unsealSecret(parsed.token, 'agent-credentials:token') : parsed.token)
       : null
@@ -72,17 +72,12 @@ export function loadCredentials(): AgentCredentials | null {
 
     if (!isSealedSecret(parsed.token || '') || parsed.version !== 2) {
       saveCredentials(credentials)
-    } else {
-      try {
-        fs.chmodSync(filePath, 0o600)
-      } catch {
-        // Best-effort on platforms where POSIX modes are not available.
-      }
     }
 
     return credentials
-  } catch {
-    return null
+  } catch (error) {
+    if (error instanceof SecureStoreError) throw error
+    throw new SecureStoreError('XYVA_SECRET_INVALID', 'Stored agent credentials are unreadable.')
   }
 }
 
@@ -96,10 +91,7 @@ export function saveCredentials(credentials: AgentCredentials): void {
 }
 
 export function clearCredentials(): void {
-  const filePath = getCredentialsPath()
-  if (fs.existsSync(filePath)) {
-    fs.rmSync(filePath)
-  }
+  deletePrivateFile(getCredentialsPath())
 }
 
 export async function loginFlow(options: LoginFlowOptions = {}): Promise<AgentCredentials> {

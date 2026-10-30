@@ -16,13 +16,25 @@ import {
   saveProviderConfiguration,
   setFlowProviderGrant,
 } from '../../packages/agent/src/config.js'
+import { readPrivateFile, writePrivateFile } from '../../packages/agent/src/secure-store.js'
 
 const stateDirectories: string[] = []
 const previousStateDirectory = process.env.XYVA_AGENT_STATE_DIR
 
+function expectPrivateFileProtection(filePath: string): void {
+  if (process.platform === 'win32') {
+    expect(() => readPrivateFile(filePath)).not.toThrow()
+    return
+  }
+  expect(fs.statSync(filePath).mode & 0o777).toBe(0o600)
+}
+
 function useIsolatedState(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-config-'))
-  stateDirectories.push(directory)
+  // The native Windows store must create and own the private state root; an
+  // already-created Temp child deliberately fails its inherited ACL preflight.
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-config-'))
+  const directory = path.join(parent, 'state')
+  stateDirectories.push(parent)
   process.env.XYVA_AGENT_STATE_DIR = directory
   return directory
 }
@@ -123,13 +135,13 @@ describe('agent provider configuration', () => {
       youtrackToken: null,
       port: 7900,
     })
-    fs.writeFileSync(configPath, malformed, { mode: 0o600 })
+    writePrivateFile(configPath, malformed)
 
     expect(() => saveProviderConfiguration({ providerId: 'ollama', defaultModel: 'gemma3:4b' })).toThrow(/refusing to overwrite/i)
     expect(() => setFlowProviderGrant('openai', true)).toThrow(/refusing to overwrite/i)
     expect(() => setFlowProviderGrant('openai', false)).toThrow(/refusing to overwrite/i)
     expect(() => deleteProviderConfiguration('openai')).toThrow(/refusing to overwrite/i)
     expect(fs.readFileSync(configPath, 'utf8')).toBe(malformed)
-    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600)
+    expectPrivateFileProtection(configPath)
   })
 })
