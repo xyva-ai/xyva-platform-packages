@@ -125,8 +125,10 @@ describe('agent secret storage', () => {
     expect(fs.existsSync(path.join(isolatedState, 'credentials.json'))).toBe(true)
     expect(fs.existsSync(xyvaPath('credentials.json'))).toBe(false)
     const homeFixture = xyvaPath('fixture.json')
+    delete process.env.XYVA_AGENT_STATE_DIR
     writePrivateFile(homeFixture, 'synthetic')
     fs.rmSync(homeFixture)
+    process.env.XYVA_AGENT_STATE_DIR = isolatedState
     expect(() => SecurityGuard.approveProjectRoot(xyvaPath())).toThrow(/protected/i)
     expect(SecurityGuard.isPathSafe(xyvaPath('credentials.json'))).toBe(false)
 

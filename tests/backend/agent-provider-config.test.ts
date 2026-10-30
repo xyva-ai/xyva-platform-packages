@@ -16,10 +16,18 @@ import {
   saveProviderConfiguration,
   setFlowProviderGrant,
 } from '../../packages/agent/src/config.js'
-import { writePrivateFile } from '../../packages/agent/src/secure-store.js'
+import { readPrivateFile, writePrivateFile } from '../../packages/agent/src/secure-store.js'
 
 const stateDirectories: string[] = []
 const previousStateDirectory = process.env.XYVA_AGENT_STATE_DIR
+
+function expectPrivateFileProtection(filePath: string): void {
+  if (process.platform === 'win32') {
+    expect(() => readPrivateFile(filePath)).not.toThrow()
+    return
+  }
+  expect(fs.statSync(filePath).mode & 0o777).toBe(0o600)
+}
 
 function useIsolatedState(): string {
   // The native Windows store must create and own the private state root; an
@@ -134,6 +142,6 @@ describe('agent provider configuration', () => {
     expect(() => setFlowProviderGrant('openai', false)).toThrow(/refusing to overwrite/i)
     expect(() => deleteProviderConfiguration('openai')).toThrow(/refusing to overwrite/i)
     expect(fs.readFileSync(configPath, 'utf8')).toBe(malformed)
-    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600)
+    expectPrivateFileProtection(configPath)
   })
 })
