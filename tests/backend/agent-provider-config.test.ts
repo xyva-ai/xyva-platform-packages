@@ -134,6 +134,8 @@ describe('agent provider configuration', () => {
     expect(() => setFlowProviderGrant('openai', false)).toThrow(/refusing to overwrite/i)
     expect(() => deleteProviderConfiguration('openai')).toThrow(/refusing to overwrite/i)
     expect(fs.readFileSync(configPath, 'utf8')).toBe(malformed)
-    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(configPath).mode & 0o777).toBe(0o600)
+    }
   })
 })
