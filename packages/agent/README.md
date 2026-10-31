@@ -110,3 +110,32 @@ The browser entitlement grant is automatic after the user starts pairing, remain
 expires after 60 seconds, and is challenge-bound to that exact local Flow pairing token. Agent
 reconnection after the five-minute family lease requires a new browser-session check and grant;
 Flow never receives the Agent license token and the Agent never receives the Flow browser cookie.
+
+## Isolated Codex CLI bridge (test-only)
+
+`ProviderCliBridgeV1` is deliberately separate from `ProviderBridgeV1`: it can
+only address an existing local Codex CLI login and never accepts API keys,
+provider endpoints, paths, shell arguments, or environment values from a
+browser. It is default-deny, exposes only `read_only`, and is limited to an
+authenticated QA Studio bridge session. Flow cannot call this surface.
+
+For an explicitly authorized local test, the operator must make both choices
+on the same machine:
+
+```bash
+XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE=1 \
+  npx @xyva/agent provider cli grant codex --product qa-studio --yes
+```
+
+Revocation is explicit and immediately returns the bridge to product-denied:
+
+```bash
+npx @xyva/agent provider cli grant codex --product qa-studio --revoke --yes
+```
+
+The environment switch is intentionally not persisted. The command records
+only the local non-secret QA Studio consent; it never performs login, reads a
+session file, installs or updates a provider CLI, or starts a model request.
+CLI discovery may report installation/authentication readiness but does not
+perform inference. Commercial use, Windows device acceptance, and any provider
+terms review are separate gates.

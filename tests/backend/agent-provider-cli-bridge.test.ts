@@ -1,0 +1,156 @@
+// @vitest-environment node
+
+import { EventEmitter } from 'node:events'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { WebSocket } from 'ws'
+
+vi.mock('../../packages/agent/src/license.js', () => ({
+  checkLicenseGuard: () => ({ allowed: true, tier: 'test' }),
+  getLicenseStatus: () => ({ allowed: true, tier: 'test' }),
+}))
+
+import { registerAllHandlers } from '../../packages/agent/src/bridge/register-handlers.js'
+import { handleWsMessage, resetHandlers, setBridgeConnectionContext } from '../../packages/agent/src/bridge/ws-handler.js'
+import { setQaCliProviderGrant } from '../../packages/agent/src/config.js'
+import type { CliProviderAdapter } from '../../packages/agent/src/providers/cli-types.js'
+
+class FakeWebSocket extends EventEmitter {
+  readonly OPEN = 1
+  readonly sent: string[] = []
+  readyState = this.OPEN
+  send(value: string): void { this.sent.push(value) }
+}
+
+const previousStateDirectory = process.env.XYVA_AGENT_STATE_DIR
+const previousFeature = process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE
+const stateDirectories: string[] = []
+
+afterEach(() => {
+  resetHandlers()
+  vi.restoreAllMocks()
+  if (previousStateDirectory === undefined) delete process.env.XYVA_AGENT_STATE_DIR
+  else process.env.XYVA_AGENT_STATE_DIR = previousStateDirectory
+  if (previousFeature === undefined) delete process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE
+  else process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE = previousFeature
+  for (const directory of stateDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true })
+})
+
+function response(socket: FakeWebSocket, id: string): Record<string, unknown> | undefined {
+  return socket.sent.map((entry) => JSON.parse(entry) as Record<string, unknown>).find((entry) => entry.id === id)
+}
+
+function authorizeQa(socket: FakeWebSocket): void {
+  setBridgeConnectionContext(socket as unknown as WebSocket, { capability: 'qa-studio.full-bridge', sessionFamilyId: 'qa-family' })
+}
+
+function authorizeFlow(socket: FakeWebSocket): void {
+  setBridgeConnectionContext(socket as unknown as WebSocket, { capability: 'provider-bridge.v1', sessionFamilyId: 'flow-family' })
+}
+
+function grantCli(): void {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-cli-bridge-'))
+  stateDirectories.push(parent)
+  process.env.XYVA_AGENT_STATE_DIR = path.join(parent, 'state')
+  setQaCliProviderGrant('codex', true)
+  process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE = '1'
+}
+
+function discovery() {
+  return {
+    providerId: 'codex' as const, displayName: 'Codex', command: 'codex', installed: true, executable: true,
+    installationKind: 'system' as const, authentication: 'authenticated' as const, readiness: 'ready' as const,
+    version: { installedVersion: '0.1.0', supported: true, minimumVersion: '0.1.0', updateStatus: 'current' as const, updateCommand: null },
+    loginCommand: null, installCommand: 'not-used', detail: 'synthetic',
+  }
+}
+
+function fakeRegistry(adapter: Partial<CliProviderAdapter>) {
+  const fullAdapter = {
+    providerId: 'codex' as const,
+    discover: async () => discovery(), getReadiness: async () => discovery(), beginLogin: async () => ({ started: false, detail: 'disabled' }),
+    listModels: async () => [], getVersionStatus: async () => discovery().version,
+    cancel: () => false, infer: async () => ({ outputText: 'synthetic', inputTokens: 1, outputTokens: 1 }),
+    ...adapter,
+  } as CliProviderAdapter
+  return { get: (providerId: string) => providerId === 'codex' ? fullAdapter : undefined, status: async () => [discovery()] }
+}
+
+async function call(socket: FakeWebSocket, id: string, method: string, args: unknown[]): Promise<void> {
+  await handleWsMessage(socket as unknown as WebSocket, { type: 'call', id, method, protocolVersion: 1, args })
+}
+
+describe('provider CLI bridge v1', () => {
+  it('is unavailable without a product context and unavailable to Flow', async () => {
+    registerAllHandlers({ cliRegistry: fakeRegistry({}) })
+    const unpaired = new FakeWebSocket()
+    await call(unpaired, 'unpaired', 'providerCliCapabilitiesV1', [{ schemaVersion: 1, requestId: 'cap-1' }])
+    expect(response(unpaired, 'unpaired')).toMatchObject({ ok: false, error: 'Bridge method unavailable' })
+
+    const flow = new FakeWebSocket()
+    authorizeFlow(flow)
+    await call(flow, 'flow', 'providerCliCapabilitiesV1', [{ schemaVersion: 1, requestId: 'cap-2' }])
+    expect(response(flow, 'flow')).toMatchObject({ ok: false, error: 'Bridge method unavailable' })
+  })
+
+  it('is default-deny until both local feature activation and QA consent exist', async () => {
+    const socket = new FakeWebSocket()
+    authorizeQa(socket)
+    registerAllHandlers({ cliRegistry: fakeRegistry({}) })
+    await call(socket, 'disabled', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-1', providerId: 'codex', mode: 'read_only', prompt: 'synthetic' }])
+    expect(response(socket, 'disabled')).toMatchObject({ ok: true, data: { status: 'failed', code: 'feature_disabled' } })
+
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-cli-bridge-'))
+    stateDirectories.push(parent)
+    process.env.XYVA_AGENT_STATE_DIR = path.join(parent, 'state')
+    process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE = '1'
+    await call(socket, 'not-granted', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-2', providerId: 'codex', mode: 'read_only', prompt: 'synthetic' }])
+    expect(response(socket, 'not-granted')).toMatchObject({ ok: true, data: { status: 'failed', code: 'product_not_authorized' } })
+  })
+
+  it('uses a fake adapter, reports capabilities, and excludes caller-controlled process data', async () => {
+    grantCli()
+    const infer = vi.fn(async () => ({ outputText: 'synthetic answer', inputTokens: 2, outputTokens: 3 }))
+    registerAllHandlers({ cliRegistry: fakeRegistry({ infer }) })
+    const socket = new FakeWebSocket()
+    authorizeQa(socket)
+    await call(socket, 'capabilities', 'providerCliCapabilitiesV1', [{ schemaVersion: 1, requestId: 'cap-1' }])
+    await call(socket, 'infer', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-1', providerId: 'codex', mode: 'read_only', prompt: 'synthetic prompt' }])
+    expect(response(socket, 'capabilities')).toMatchObject({ ok: true, data: { status: 'completed', capabilities: [expect.objectContaining({ enabled: true, modes: ['read_only'] })] } })
+    expect(response(socket, 'infer')).toMatchObject({ ok: true, data: { status: 'completed', outputText: 'synthetic answer' } })
+    expect(infer).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'infer-1', prompt: 'synthetic prompt', signal: expect.any(AbortSignal) }))
+    await call(socket, 'unsafe', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-2', providerId: 'codex', mode: 'read_only', prompt: 'x', env: { SECRET: 'x' } }])
+    expect(response(socket, 'unsafe')).toMatchObject({ ok: true, data: { status: 'failed', code: 'invalid_request' } })
+  })
+
+  it('cancels only the request on the owning QA socket and fails closed after completion', async () => {
+    grantCli()
+    const cancel = vi.fn(() => true)
+    const infer = vi.fn((request: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => request.signal?.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')))))
+    registerAllHandlers({ cliRegistry: fakeRegistry({ infer, cancel }) })
+    const owner = new FakeWebSocket(); const other = new FakeWebSocket()
+    authorizeQa(owner); authorizeQa(other)
+    const pending = call(owner, 'infer', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'shared', providerId: 'codex', mode: 'read_only', prompt: 'synthetic' }])
+    await vi.waitFor(() => expect(infer).toHaveBeenCalledOnce())
+    await call(other, 'cross-cancel', 'providerCliCancelV1', [{ schemaVersion: 1, requestId: 'shared' }])
+    expect(response(other, 'cross-cancel')).toMatchObject({ ok: true, data: { status: 'failed', code: 'conflict' } })
+    await call(owner, 'cancel', 'providerCliCancelV1', [{ schemaVersion: 1, requestId: 'shared' }])
+    await pending
+    expect(cancel).toHaveBeenCalledWith('shared')
+    expect(response(owner, 'infer')).toMatchObject({ ok: true, data: { status: 'cancelled' } })
+    await call(owner, 'after', 'providerCliCancelV1', [{ schemaVersion: 1, requestId: 'shared' }])
+    expect(response(owner, 'after')).toMatchObject({ ok: true, data: { status: 'failed', code: 'conflict' } })
+  })
+
+  it('maps adapter errors to stable secret-free failure codes', async () => {
+    grantCli()
+    registerAllHandlers({ cliRegistry: fakeRegistry({ infer: async () => { throw new Error('api-key=do-not-reflect') } }) })
+    const socket = new FakeWebSocket(); authorizeQa(socket)
+    await call(socket, 'failure', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-1', providerId: 'codex', mode: 'read_only', prompt: 'synthetic' }])
+    expect(response(socket, 'failure')).toMatchObject({ ok: true, data: { status: 'failed', code: 'adapter_error' } })
+    expect(JSON.stringify(socket.sent)).not.toContain('api-key=do-not-reflect')
+  })
+})

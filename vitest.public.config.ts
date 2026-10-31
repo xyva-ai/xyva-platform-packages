@@ -23,6 +23,9 @@ export default defineConfig({
       "tests/backend/swarm-config-validation.test.ts",
       "tests/backend/provider-contracts-v1.test.ts",
       "tests/backend/provider-bridge-client-v1.test.ts",
+      "tests/backend/provider-cli-contracts-v1.test.ts",
+      "tests/backend/provider-cli-bridge-client-v1.test.ts",
+      "tests/backend/agent-provider-cli-bridge.test.ts",
     ],
   },
 })

@@ -18,6 +18,7 @@ export interface AgentConfig {
   aiApiKeys: Record<string, string>
   aiDefaultModels: Partial<Record<ProviderIdV1, string>>
   flowProviderGrants: ProviderIdV1[]
+  qaCliProviderGrants: ('codex')[]
   gitlabToken: string | null
   githubToken: string | null
   youtrackToken: string | null
@@ -29,6 +30,7 @@ type StoredAgentConfig = {
   aiApiKeys: Record<string, string>
   aiDefaultModels: Partial<Record<ProviderIdV1, string>>
   flowProviderGrants: ProviderIdV1[]
+  qaCliProviderGrants: ('codex')[]
   gitlabToken: string | null
   githubToken: string | null
   youtrackToken: string | null
@@ -40,6 +42,7 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   aiApiKeys: {},
   aiDefaultModels: {},
   flowProviderGrants: [],
+  qaCliProviderGrants: [],
   gitlabToken: null,
   githubToken: null,
   youtrackToken: null,
@@ -47,7 +50,7 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
 }
 
 function defaultAgentConfig(): AgentConfig {
-  return { ...DEFAULT_AGENT_CONFIG, aiApiKeys: {}, aiDefaultModels: {}, flowProviderGrants: [] }
+  return { ...DEFAULT_AGENT_CONFIG, aiApiKeys: {}, aiDefaultModels: {}, flowProviderGrants: [], qaCliProviderGrants: [] }
 }
 
 function getConfigPath() {
@@ -152,6 +155,9 @@ function toStoredConfig(config: AgentConfig): StoredAgentConfig {
     ),
     aiDefaultModels: normalizeDefaultModels(config.aiDefaultModels),
     flowProviderGrants: normalizeProviderGrants(config.flowProviderGrants),
+    // Older in-memory callers may not yet carry this non-secret opt-in field.
+    // Absence must remain default-deny rather than breaking config persistence.
+    qaCliProviderGrants: Array.isArray(config.qaCliProviderGrants) && config.qaCliProviderGrants.includes('codex') ? ['codex'] : [],
     gitlabToken: config.gitlabToken ? encryptValue(config.gitlabToken, 'gitlab') : null,
     githubToken: config.githubToken ? encryptValue(config.githubToken, 'github') : null,
     youtrackToken: config.youtrackToken ? encryptValue(config.youtrackToken, 'youtrack') : null,
@@ -175,6 +181,7 @@ function fromStoredConfig(config: Partial<StoredAgentConfig> | null | undefined)
       : {}),
     aiDefaultModels: normalizeDefaultModels(config?.aiDefaultModels),
     flowProviderGrants: normalizeProviderGrants(config?.flowProviderGrants),
+    qaCliProviderGrants: config?.qaCliProviderGrants?.includes('codex') ? ['codex'] : [],
     gitlabToken: typeof config?.gitlabToken === 'string' ? decryptValue(config.gitlabToken, 'gitlab') : null,
     githubToken: typeof config?.githubToken === 'string' ? decryptValue(config.githubToken, 'github') : null,
     youtrackToken: typeof config?.youtrackToken === 'string' ? decryptValue(config.youtrackToken, 'youtrack') : null,
@@ -249,6 +256,9 @@ function loadConfigForMutation(): AgentConfig {
           || !PROVIDER_IDS_V1.includes(provider as ProviderIdV1))
         || new Set(parsed.flowProviderGrants).size !== parsed.flowProviderGrants.length) throw new Error('invalid')
     }
+    if (parsed.qaCliProviderGrants !== undefined && (!Array.isArray(parsed.qaCliProviderGrants)
+      || parsed.qaCliProviderGrants.some((provider) => provider !== 'codex')
+      || new Set(parsed.qaCliProviderGrants).size !== parsed.qaCliProviderGrants.length)) throw new Error('invalid')
     for (const [field, value] of [
       ['gitlab', parsed.gitlabToken],
       ['github', parsed.githubToken],
@@ -318,6 +328,18 @@ export function getProviderConfigurationStatusesWithFlowGrants(): AgentProviderC
 
 export function isProviderGrantedToFlow(providerId: ProviderIdV1): boolean {
   return loadConfig().flowProviderGrants.includes(providerId)
+}
+
+/** Local, non-secret consent for the separate QA Studio CLI bridge. */
+export function isQaCliProviderGranted(providerId: unknown): boolean {
+  return providerId === 'codex' && loadConfig().qaCliProviderGrants.includes('codex')
+}
+
+export function setQaCliProviderGrant(providerId: unknown, granted: unknown): boolean {
+  if (providerId !== 'codex' || typeof granted !== 'boolean') throw new Error('Invalid CLI provider grant')
+  const current = loadConfigForMutation()
+  saveConfig({ ...current, qaCliProviderGrants: granted ? ['codex'] : [] })
+  return granted
 }
 
 export function setFlowProviderGrant(providerIdValue: unknown, grantedValue: unknown): AgentProviderConfigurationStatusWithFlowGrant {

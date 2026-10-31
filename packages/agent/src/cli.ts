@@ -12,6 +12,7 @@ import {
   providerStatusesForCli,
   setFlowProviderGrantFromCli,
 } from './provider-cli.js'
+import { setQaCliProviderGrant } from './config.js'
 import { startServer } from './server.js'
 import { CliAdapterRegistry } from './providers/cli-registry.js'
 import { AGENT_VERSION } from './version.js'
@@ -176,6 +177,21 @@ providerCliCommand
       else if (!status.version.supported && status.version.updateCommand) console.log(`  Update guidance: ${status.version.updateCommand}`)
       else if (status.authentication === 'not_authenticated' && status.loginCommand) console.log(`  Login: ${status.loginCommand}`)
     }
+  })
+
+providerCliCommand
+  .command('grant')
+  .description('Locally grant or revoke QA Studio access to the isolated Codex CLI bridge')
+  .argument('<provider>', 'codex')
+  .requiredOption('--product <product>', 'Product receiving the local grant (qa-studio)')
+  .option('--revoke', 'Revoke instead of grant')
+  .option('--yes', 'Confirm this local bridge consent change')
+  .action((provider, options) => {
+    if (provider !== 'codex' || options.product !== 'qa-studio' || options.yes !== true) {
+      throw new Error('CLI bridge grant requires codex, qa-studio and --yes')
+    }
+    const granted = setQaCliProviderGrant('codex', options.revoke !== true)
+    console.log(chalk.green(granted ? 'Granted Codex CLI bridge to QA Studio.' : 'Revoked Codex CLI bridge from QA Studio.'))
   })
 
 providerCommand

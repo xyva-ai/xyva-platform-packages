@@ -1,5 +1,7 @@
 import type { ProviderIdV1 } from '@xyva/contracts'
 
+export * from './provider-cli-bridge-v1.js'
+
 export const BRIDGE_PROTOCOL_VERSION = 1 as const
 
 export interface BridgeRequest {

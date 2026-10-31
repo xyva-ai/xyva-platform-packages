@@ -9,6 +9,13 @@ import {
   validateProviderModelListRequestV1,
   type ProviderFailureCodeV1,
   type ProviderIdV1,
+  validateProviderCliCancellationRequestV1,
+  validateProviderCliCapabilitiesRequestV1,
+  validateProviderCliInferenceRequestV1,
+  validateProviderCliCancellationOutcomeV1,
+  validateProviderCliCapabilitiesOutcomeV1,
+  validateProviderCliInferenceOutcomeV1,
+  type CliFailureCodeV1,
 } from '@xyva/contracts'
 import type { AgentCredentials } from '../auth.js'
 import { installPlaywrightChromium } from '../bootstrap.js'
@@ -19,11 +26,14 @@ import {
   getConfigSummary,
   getProviderConfigurationStatuses,
   isProviderGrantedToFlow,
+  isQaCliProviderGranted,
   resolveProviderConnection,
   resolveProviderRuntime,
   saveProviderConfiguration,
   updateConfig,
 } from '../config.js'
+import { CliAdapterRegistry } from '../providers/cli-registry.js'
+import type { CliProviderAdapter } from '../providers/cli-types.js'
 import { checkLicenseGuard, getLicenseStatus } from '../license.js'
 import { getAgentReadiness } from '../readiness.js'
 import { AgentAiFacade, type AgentAiConfig, type AgentAiListModelsRequest, type AgentAiMessage } from '../services/ai-facade.js'
@@ -47,12 +57,15 @@ import {
 interface HandlerRegistrationOptions {
   projectPath?: string
   credentials?: AgentCredentials
+  cliRegistry?: Pick<CliAdapterRegistry, 'get' | 'status'>
 }
 
 interface AiSocketState {
   scopeId: string
   requests: Map<string, AbortController>
 }
+
+interface CliSocketState { requests: Map<string, AbortController> }
 
 const FLOW_PROVIDER_PREVIEW_MAX_OUTPUT_TOKENS = 32
 
@@ -106,6 +119,7 @@ export function registerAllHandlers(_options: HandlerRegistrationOptions = {}): 
   resetHandlers()
 
   const aiService = new AgentAiFacade()
+  const cliRegistry = _options.cliRegistry || new CliAdapterRegistry()
   const configuredAiClient = {
     chat: (messages: AgentAiMessage[], unsafeConfig: Record<string, unknown>) => {
       const runtime = resolveProviderRuntime(undefined)
@@ -128,6 +142,7 @@ export function registerAllHandlers(_options: HandlerRegistrationOptions = {}): 
   const runnerService = new AgentRunnerService()
   const swarmService = new AgentSwarmService()
   const aiStateBySocket = new WeakMap<WebSocket, AiSocketState>()
+  const cliStateBySocket = new WeakMap<WebSocket, CliSocketState>()
   let nextAiSocketScope = 0
   const getAiSocketState = (ws: WebSocket): AiSocketState => {
     const existing = aiStateBySocket.get(ws)
@@ -139,6 +154,29 @@ export function registerAllHandlers(_options: HandlerRegistrationOptions = {}): 
     }
     aiStateBySocket.set(ws, created)
     return created
+  }
+  const getCliSocketState = (ws: WebSocket): CliSocketState => {
+    const existing = cliStateBySocket.get(ws)
+    if (existing) return existing
+    const created = { requests: new Map<string, AbortController>() }
+    cliStateBySocket.set(ws, created)
+    return created
+  }
+  const cliFailure = (requestId: string, code: CliFailureCodeV1, retryable: boolean) => validateProviderCliInferenceOutcomeV1({ schemaVersion: 1, status: 'failed', requestId, code, retryable })
+  const cliAllowed = (ws: WebSocket): boolean => (
+    getBridgeConnectionContext(ws)?.capability === 'qa-studio.full-bridge'
+      && process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE === '1'
+      && isQaCliProviderGranted('codex')
+  )
+  const cliErrorCode = (error: unknown): CliFailureCodeV1 => {
+    const message = error instanceof Error ? error.message : ''
+    if (/cancelled/iu.test(message)) return 'cancelled'
+    if (/timed out/iu.test(message)) return 'timeout'
+    if (/output limit|busy/iu.test(message)) return 'busy'
+    if (/unavailable|untrusted|not installed/iu.test(message)) return 'cli_not_installed'
+    if (/not authenticated/iu.test(message)) return 'cli_not_authenticated'
+    if (/start/iu.test(message)) return 'process_start_failed'
+    return 'adapter_error'
   }
 
   registerHandler('agentGetAuditLog', () => SecurityGuard.getAgentAuditLog())
@@ -153,6 +191,49 @@ export function registerAllHandlers(_options: HandlerRegistrationOptions = {}): 
     summary: getConfigSummaryForUpdate(payload),
   }))
   registerHandler('aiProviderStatus', () => getProviderConfigurationStatuses())
+  registerStreamingHandler('providerCliCapabilitiesV1', async (ws, requestValue) => {
+    let request: ReturnType<typeof validateProviderCliCapabilitiesRequestV1>
+    try { request = validateProviderCliCapabilitiesRequestV1(requestValue) } catch { return validateProviderCliCapabilitiesOutcomeV1({ schemaVersion: 1, status: 'failed', requestId: bridgeRequestId(requestValue), code: 'invalid_request', retryable: false }) }
+    if (getBridgeConnectionContext(ws)?.capability !== 'qa-studio.full-bridge') return validateProviderCliCapabilitiesOutcomeV1({ schemaVersion: 1, status: 'failed', requestId: request.requestId, code: 'product_not_authorized', retryable: false })
+    const status = (await cliRegistry.status()).find((candidate) => candidate.providerId === 'codex')
+    return validateProviderCliCapabilitiesOutcomeV1({ schemaVersion: 1, status: 'completed', requestId: request.requestId, capabilities: [{ schemaVersion: 1, providerId: 'codex', installed: Boolean(status?.installed), authenticated: status?.authentication === 'authenticated' ? true : status?.authentication === 'not_checked' ? null : false, enabled: cliAllowed(ws), modes: ['read_only'] }] })
+  })
+  registerStreamingHandler('providerCliInferV1', async (ws, requestValue) => {
+    let request: ReturnType<typeof validateProviderCliInferenceRequestV1>
+    try { request = validateProviderCliInferenceRequestV1(requestValue) } catch { return cliFailure(bridgeRequestId(requestValue), 'invalid_request', false) }
+    if (getBridgeConnectionContext(ws)?.capability !== 'qa-studio.full-bridge') return cliFailure(request.requestId, 'product_not_authorized', false)
+    if (process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE !== '1') return cliFailure(request.requestId, 'feature_disabled', false)
+    if (!isQaCliProviderGranted('codex')) return cliFailure(request.requestId, 'product_not_authorized', false)
+    const adapter = cliRegistry.get('codex') as CliProviderAdapter | undefined
+    if (!adapter) return cliFailure(request.requestId, 'unsupported_provider', false)
+    const state = getCliSocketState(ws)
+    if (state.requests.has(request.requestId)) return cliFailure(request.requestId, 'conflict', false)
+    const controller = new AbortController()
+    state.requests.set(request.requestId, controller)
+    const abortOnClose = () => controller.abort()
+    ws.once('close', abortOnClose)
+    try {
+      const result = await adapter.infer({ requestId: request.requestId, prompt: request.prompt, signal: controller.signal })
+      if (controller.signal.aborted) return validateProviderCliInferenceOutcomeV1({ schemaVersion: 1, status: 'cancelled', requestId: request.requestId })
+      return validateProviderCliInferenceOutcomeV1({ schemaVersion: 1, status: 'completed', requestId: request.requestId, providerId: 'codex', outputText: result.outputText, inputTokens: result.inputTokens, outputTokens: result.outputTokens })
+    } catch (error) {
+      if (controller.signal.aborted || cliErrorCode(error) === 'cancelled') return validateProviderCliInferenceOutcomeV1({ schemaVersion: 1, status: 'cancelled', requestId: request.requestId })
+      return cliFailure(request.requestId, cliErrorCode(error), ['timeout', 'busy', 'provider_unavailable', 'adapter_error'].includes(cliErrorCode(error)))
+    } finally {
+      ws.off('close', abortOnClose)
+      state.requests.delete(request.requestId)
+    }
+  })
+  registerStreamingHandler('providerCliCancelV1', (ws, requestValue) => {
+    let request: ReturnType<typeof validateProviderCliCancellationRequestV1>
+    try { request = validateProviderCliCancellationRequestV1(requestValue) } catch { return validateProviderCliCancellationOutcomeV1({ schemaVersion: 1, status: 'failed', requestId: bridgeRequestId(requestValue), code: 'invalid_request', retryable: false }) }
+    if (!cliAllowed(ws)) return validateProviderCliCancellationOutcomeV1({ schemaVersion: 1, status: 'failed', requestId: request.requestId, code: 'product_not_authorized', retryable: false })
+    const controller = getCliSocketState(ws).requests.get(request.requestId)
+    if (!controller || controller.signal.aborted) return validateProviderCliCancellationOutcomeV1({ schemaVersion: 1, status: 'failed', requestId: request.requestId, code: 'conflict', retryable: false })
+    controller.abort()
+    ;(cliRegistry.get('codex') as CliProviderAdapter | undefined)?.cancel(request.requestId)
+    return validateProviderCliCancellationOutcomeV1({ schemaVersion: 1, status: 'completed', requestId: request.requestId, cancellationRequested: true })
+  })
   registerHandler('aiProviderSave', (payload) => {
     try {
       return { ok: true, status: saveProviderConfiguration(payload) }
