@@ -7,7 +7,7 @@ import path from 'node:path'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadCredentials, saveCredentials } from '../../packages/agent/src/auth'
-import { loadConfig, saveConfig } from '../../packages/agent/src/config'
+import { loadConfig, saveConfig, updateConfig } from '../../packages/agent/src/config'
 import { checkLicenseGuard, createMachineId, validateLicense } from '../../packages/agent/src/license'
 import { AgentSwarmCredentialStore } from '../../packages/agent/src/services/swarm/credential-store'
 import { AgentFsService } from '../../packages/agent/src/services/fs-service'
@@ -70,7 +70,7 @@ function writeLicense(token: string, machineId: string, overrides: Record<string
     machineId,
     portalUrl: 'http://localhost:3000',
     ...overrides,
-  }))
+  }), { mode: 0o600 })
 }
 
 beforeEach(() => {
@@ -175,11 +175,138 @@ describe('agent secret storage', () => {
       ...legacy,
       version: 1,
       password: 'legacy-plaintext-password',
-    }), { mode: 0o644 })
+    }), { mode: 0o600 })
     expect(await store.loadPassword(projectPath)).toBe('legacy-plaintext-password')
     expect(fs.readFileSync(filePath, 'utf8')).not.toContain('legacy-plaintext-password')
     expect(fileMode(filePath)).toBe(0o600)
     fs.rmSync(projectPath, { recursive: true, force: true })
+  })
+
+  it('never overwrites sealed swarm credentials when the master key is missing', async () => {
+    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-project-'))
+    fs.writeFileSync(path.join(projectPath, 'playwright.config.ts'), 'export default {}')
+    SecurityGuard.approveProjectRoot(projectPath)
+    const store = new AgentSwarmCredentialStore()
+    await store.save(projectPath, { username: 'qa-user', password: 'first-synthetic-password' })
+
+    const credentialsDirectory = xyvaPath('swarm-credentials')
+    const filePath = path.join(credentialsDirectory, fs.readdirSync(credentialsDirectory)[0])
+    const before = fs.readFileSync(filePath, 'utf8')
+    fs.rmSync(xyvaPath('secret-store.key'))
+
+    await expect(store.save(projectPath, { username: 'qa-user', password: 'second-synthetic-password' }))
+      .rejects.toThrow(/key is missing/i)
+    expect(fs.existsSync(xyvaPath('secret-store.key'))).toBe(false)
+    expect(fs.readFileSync(filePath, 'utf8')).toBe(before)
+    fs.rmSync(projectPath, { recursive: true, force: true })
+  })
+
+  it('does not create a new master key when only swarm data remains', async () => {
+    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-project-'))
+    fs.writeFileSync(path.join(projectPath, 'playwright.config.ts'), 'export default {}')
+    SecurityGuard.approveProjectRoot(projectPath)
+    const store = new AgentSwarmCredentialStore()
+    await store.save(projectPath, { username: 'qa-user', password: 'swarm-only-password' })
+
+    const swarmDirectory = xyvaPath('swarm-credentials')
+    const swarmPath = path.join(swarmDirectory, fs.readdirSync(swarmDirectory)[0])
+    const before = fs.readFileSync(swarmPath, 'utf8')
+    fs.rmSync(xyvaPath('secret-store.key'))
+
+    expect(() => saveConfig({
+      aiProvider: 'openai',
+      aiApiKeys: { openai: 'new-synthetic-api-key' },
+      aiDefaultModels: { openai: 'gpt-5' },
+      flowProviderGrants: [],
+      gitlabToken: null,
+      githubToken: null,
+      youtrackToken: null,
+      port: 7900,
+    })).toThrow(/swarm data|sealed data|key is missing/i)
+    expect(fs.existsSync(xyvaPath('secret-store.key'))).toBe(false)
+    expect(fs.readFileSync(swarmPath, 'utf8')).toBe(before)
+    expect(fs.existsSync(xyvaPath('config.json'))).toBe(false)
+    fs.rmSync(projectPath, { recursive: true, force: true })
+  })
+
+  it('never replaces an invalid existing master key', () => {
+    fs.mkdirSync(xyvaPath(), { recursive: true })
+    const keyPath = xyvaPath('secret-store.key')
+    fs.writeFileSync(keyPath, 'not-a-valid-master-key', { mode: 0o600 })
+
+    expect(() => saveCredentials({
+      token: 'synthetic-token',
+      email: 'qa@example.test',
+      expiresAt: Date.now() + 60_000,
+      portalUrl: 'https://xyva.ai',
+    })).toThrow(/key is invalid/i)
+    expect(fs.readFileSync(keyPath, 'utf8')).toBe('not-a-valid-master-key')
+    expect(fs.existsSync(xyvaPath('credentials.json'))).toBe(false)
+  })
+
+  it('refuses an existing master key with broad POSIX permissions without repairing it', () => {
+    saveCredentials({
+      token: 'first-synthetic-token',
+      email: 'qa@example.test',
+      expiresAt: Date.now() + 60_000,
+      portalUrl: 'https://xyva.ai',
+    })
+    const keyPath = xyvaPath('secret-store.key')
+    const before = fs.readFileSync(keyPath, 'utf8')
+    fs.chmodSync(keyPath, 0o644)
+
+    expect(() => saveCredentials({
+      token: 'second-synthetic-token',
+      email: 'qa@example.test',
+      expiresAt: Date.now() + 60_000,
+      portalUrl: 'https://xyva.ai',
+    })).toThrow(/permissions are not restrictive/i)
+    expect(fs.readFileSync(keyPath, 'utf8')).toBe(before)
+    expect(fileMode(keyPath)).toBe(0o644)
+  })
+
+  it('refuses corrupt sealed configuration without replacing it with defaults', () => {
+    saveConfig({
+      aiProvider: 'openai',
+      aiApiKeys: { openai: 'synthetic-api-key' },
+      aiDefaultModels: { openai: 'gpt-5' },
+      flowProviderGrants: [],
+      gitlabToken: null,
+      githubToken: null,
+      youtrackToken: null,
+      port: 7900,
+    })
+    const configPath = xyvaPath('config.json')
+    const corrupted = JSON.stringify({
+      ...JSON.parse(fs.readFileSync(configPath, 'utf8')),
+      aiApiKeys: { openai: 'sealed:v1:invalid.invalid.invalid' },
+    })
+    fs.writeFileSync(configPath, corrupted, { mode: 0o600 })
+
+    expect(() => loadConfig()).toThrow(/cannot be decrypted/i)
+    expect(() => updateConfig({ port: 7901 })).toThrow(/cannot be decrypted/i)
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(corrupted)
+  })
+
+  it('never creates a replacement master key for existing sealed data', () => {
+    saveConfig({
+      aiProvider: 'openai',
+      aiApiKeys: { openai: 'synthetic-api-key' },
+      aiDefaultModels: { openai: 'gpt-5' },
+      flowProviderGrants: [],
+      gitlabToken: null,
+      githubToken: null,
+      youtrackToken: null,
+      port: 7900,
+    })
+    const keyPath = xyvaPath('secret-store.key')
+    const configPath = xyvaPath('config.json')
+    const before = fs.readFileSync(configPath, 'utf8')
+    fs.rmSync(keyPath)
+
+    expect(() => loadConfig()).toThrow(/key is missing/i)
+    expect(fs.existsSync(keyPath)).toBe(false)
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(before)
   })
 })
 
@@ -258,7 +385,7 @@ describe('agent license integrity', () => {
       lastValidated: Date.now(),
       offlineSince: null,
       machineId,
-    }))
+    }), { mode: 0o600 })
 
     expect(checkLicenseGuard()).toMatchObject({ allowed: false })
     const refreshedToken = signLicense(machineId)
@@ -289,7 +416,7 @@ describe('agent license integrity', () => {
       })).toString('base64url')
       const signature = crypto.createHmac('sha256', 'attacker-controlled-secret').update(data).digest('base64url')
       fs.mkdirSync(xyvaPath(), { recursive: true })
-      fs.writeFileSync(xyvaPath('license.json'), JSON.stringify(`XYVA-${data}.${signature}`))
+      fs.writeFileSync(xyvaPath('license.json'), JSON.stringify(`XYVA-${data}.${signature}`), { mode: 0o600 })
 
       expect(checkLicenseGuard()).toMatchObject({
         allowed: false,
