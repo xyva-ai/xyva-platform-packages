@@ -195,8 +195,14 @@ export function registerAllHandlers(_options: HandlerRegistrationOptions = {}): 
     let request: ReturnType<typeof validateProviderCliCapabilitiesRequestV1>
     try { request = validateProviderCliCapabilitiesRequestV1(requestValue) } catch { return validateProviderCliCapabilitiesOutcomeV1({ schemaVersion: 1, status: 'failed', requestId: bridgeRequestId(requestValue), code: 'invalid_request', retryable: false }) }
     if (getBridgeConnectionContext(ws)?.capability !== 'qa-studio.full-bridge') return validateProviderCliCapabilitiesOutcomeV1({ schemaVersion: 1, status: 'failed', requestId: request.requestId, code: 'product_not_authorized', retryable: false })
-    const status = (await cliRegistry.status()).find((candidate) => candidate.providerId === 'codex')
-    return validateProviderCliCapabilitiesOutcomeV1({ schemaVersion: 1, status: 'completed', requestId: request.requestId, capabilities: [{ schemaVersion: 1, providerId: 'codex', installed: Boolean(status?.installed), authenticated: status?.authentication === 'authenticated' ? true : status?.authentication === 'not_checked' ? null : false, enabled: cliAllowed(ws), modes: ['read_only'] }] })
+    try {
+      const status = (await cliRegistry.status()).find((candidate) => candidate.providerId === 'codex')
+      return validateProviderCliCapabilitiesOutcomeV1({ schemaVersion: 1, status: 'completed', requestId: request.requestId, capabilities: [{ schemaVersion: 1, providerId: 'codex', installed: Boolean(status?.installed), authenticated: status?.authentication === 'authenticated' ? true : status?.authentication === 'not_checked' ? null : false, enabled: cliAllowed(ws), modes: ['read_only'] }] })
+    } catch {
+      // Discovery details can contain local process or filesystem diagnostics.
+      // The browser receives only the stable, validated bridge failure shape.
+      return validateProviderCliCapabilitiesOutcomeV1({ schemaVersion: 1, status: 'failed', requestId: request.requestId, code: 'adapter_error', retryable: true })
+    }
   })
   registerStreamingHandler('providerCliInferV1', async (ws, requestValue) => {
     let request: ReturnType<typeof validateProviderCliInferenceRequestV1>

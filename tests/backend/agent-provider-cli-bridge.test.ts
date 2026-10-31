@@ -7,6 +7,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WebSocket } from 'ws'
+import { validateProviderCliCapabilitiesOutcomeV1 } from '../../packages/contracts/src/providers/cli-v1.js'
 
 vi.mock('../../packages/agent/src/license.js', () => ({
   checkLicenseGuard: () => ({ allowed: true, tier: 'test' }),
@@ -124,6 +125,27 @@ describe('provider CLI bridge v1', () => {
     expect(infer).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'infer-1', prompt: 'synthetic prompt', signal: expect.any(AbortSignal) }))
     await call(socket, 'unsafe', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-2', providerId: 'codex', mode: 'read_only', prompt: 'x', env: { SECRET: 'x' } }])
     expect(response(socket, 'unsafe')).toMatchObject({ ok: true, data: { status: 'failed', code: 'invalid_request' } })
+  })
+
+  it.each([
+    ['a synchronous exception', () => { throw new Error('SEC_CLI_CANARY_DO_NOT_LEAK_001 path=/synthetic/private token=synthetic') }],
+    ['a rejected status promise', async () => { throw new Error('SEC_CLI_CANARY_DO_NOT_LEAK_001 path=/synthetic/private token=synthetic') }],
+  ])('normalizes %s from capability discovery without leaking it to the WebSocket client', async (_label, status) => {
+    grantCli()
+    const socket = new FakeWebSocket(); authorizeQa(socket)
+    const registry = fakeRegistry({})
+    registerAllHandlers({ cliRegistry: { ...registry, status } })
+    await call(socket, 'canary-failure', 'providerCliCapabilitiesV1', [{ schemaVersion: 1, requestId: 'cap-canary' }])
+
+    const failure = response(socket, 'canary-failure')
+    expect(failure).toMatchObject({ ok: true, data: { schemaVersion: 1, status: 'failed', requestId: 'cap-canary', code: 'adapter_error', retryable: true } })
+    expect(validateProviderCliCapabilitiesOutcomeV1(failure?.data)).toMatchObject({ status: 'failed', code: 'adapter_error' })
+    expect(JSON.stringify(failure)).not.toMatch(/SEC_CLI_CANARY|synthetic\/private|token=synthetic|stack/iu)
+    expect(failure).not.toHaveProperty('error')
+
+    registerAllHandlers({ cliRegistry: fakeRegistry({}) })
+    await call(socket, 'after-canary', 'providerCliCapabilitiesV1', [{ schemaVersion: 1, requestId: 'cap-after' }])
+    expect(response(socket, 'after-canary')).toMatchObject({ ok: true, data: { status: 'completed', requestId: 'cap-after' } })
   })
 
   it('cancels only the request on the owning QA socket and fails closed after completion', async () => {
