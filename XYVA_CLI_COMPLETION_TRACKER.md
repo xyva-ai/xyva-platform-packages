@@ -17,7 +17,7 @@ Status values are evidence-based as of the current isolated CLI worktree.
 | CLI-10 | Flow integration | xyva-flow | NOT_EXECUTED / out of current confirmed scope | generic ProviderBridgeV1 only; no CLI boundary | explicit product composition decision; no parallel engine |
 | CLI-11 | Entitlements, grants and audit | platform-packages | PARTIAL | non-secret per-provider local grant + QA capability contract | product identity/licensing integration verification pending |
 | CLI-12 | Provider compliance | cross-provider | PARTIAL | documented operational boundary; default deny and no session extraction | current provider terms and real execution mode must be independently verified |
-| CLI-13 | Release candidate evidence | cross-repository | VERIFIED (scoped) | platform PR #23 at `ee6ed5c`, run `41798256994`; QA Studio PR #137 at `158adabb`, run `41794619559`; PR #16 Windows run `41797366842` | native device, human review and commercial/external gates remain |
+| CLI-13 | Release candidate evidence | cross-repository | VERIFIED (scoped) | platform PR #23 at `262bd34`, run `41798463100`; QA Studio PR #137 at `158adabb`, run `41794619559`; PR #16 Windows run `41797366842` | native device, human review and commercial/external gates remain |
 
 ## Current external gates
 
@@ -40,9 +40,9 @@ Status values are evidence-based as of the current isolated CLI worktree.
   The commands were `provider cli status --json`, `provider cli doctor`, and
   reporting-only `provider cli update`. No login, inference, installation, or
   update was performed.
-- Platform Packages draft PR #23 head `ee6ed5c`: the cross-socket request-ID
+- Platform Packages draft PR #23 head `262bd34`: the cross-socket request-ID
   namespace fix and release-candidate evidence are committed and pushed. Public
-  verification run `41798256994` completed successfully on Node 22 and Node 24.
+  verification run `41798463100` completed successfully on Node 22 and Node 24.
   This is package compatibility evidence, not Windows 11 device acceptance or
   real-provider evidence.
 - QA Studio draft PR #137 head `158adabb3302f69ad4b9ac269255e313e895e461`: local
