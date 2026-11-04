@@ -33,6 +33,8 @@
 - Independent human security review is still required.
 - No provider-specific signed distribution manifest is configured; the lifecycle
   API is fail-closed and the public update command remains non-mutating.
+- Flow's CLI adapter is typed and fail-closed, but authenticated runtime client
+  composition and independent tenant/cancellation review remain open.
 
 Security classification: `PARTIAL_SECURITY_ACCEPTANCE`.
 

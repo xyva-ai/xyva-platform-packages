@@ -26,7 +26,7 @@
     "qaStudioPackageIntegration": "PASS_SCOPED_HOSTED",
     "windowsHostedCompatibility": "PASS_SCOPED_WINDOWS_SERVER_2025",
     "nativeWindows11": "NOT_EXECUTED",
-    "flowIntegration": "NOT_EXECUTED_OUT_OF_CONFIRMED_SCOPE",
+    "flowIntegration": "PARTIAL_ADAPTER_RUNTIME_COMPOSITION_PENDING",
     "browserE2E": "PASS_HOSTED_SCOPED_NOT_LIVE_PROVIDER",
     "providerCompliance": "PARTIAL_EXTERNAL_REVIEW",
     "managedUpdates": "PASS_LOCAL_FAIL_CLOSED_MANIFEST_API_EXTERNAL_SOURCE_PENDING",

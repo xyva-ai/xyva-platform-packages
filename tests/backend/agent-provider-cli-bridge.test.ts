@@ -17,6 +17,7 @@ vi.mock('../../packages/agent/src/license.js', () => ({
 import { registerAllHandlers } from '../../packages/agent/src/bridge/register-handlers.js'
 import { handleWsMessage, resetHandlers, setBridgeConnectionContext } from '../../packages/agent/src/bridge/ws-handler.js'
 import { setQaCliProviderGrant } from '../../packages/agent/src/config.js'
+import { SecurityGuard } from '../../packages/agent/src/utils/SecurityGuard.js'
 import type { CliProviderAdapter } from '../../packages/agent/src/providers/cli-types.js'
 
 class FakeWebSocket extends EventEmitter {
@@ -64,7 +65,7 @@ function discovery(providerId: 'codex' | 'claude' | 'gemini' = 'codex') {
   return {
     providerId, displayName: providerId, command: providerId, installed: true, executable: true,
     installationKind: 'system' as const, authentication: 'authenticated' as const, readiness: 'ready' as const,
-    version: { installedVersion: '0.1.0', supported: true, minimumVersion: '0.1.0', updateStatus: 'current' as const, updateCommand: null },
+    version: { installedVersion: '0.1.0', latestSupportedVersion: null, supported: true, minimumVersion: '0.1.0', updateStatus: 'current' as const, updateCommand: null, integrityStatus: 'not_checked' as const, rollbackAvailable: false },
     loginCommand: null, installCommand: 'not-used', detail: 'synthetic',
   }
 }
@@ -110,6 +111,13 @@ describe('provider CLI bridge v1', () => {
     process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE = '1'
     await call(socket, 'not-granted', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-2', providerId: 'codex', mode: 'read_only', prompt: 'synthetic' }])
     expect(response(socket, 'not-granted')).toMatchObject({ ok: true, data: { status: 'failed', code: 'product_not_authorized' } })
+  })
+
+  it('records provider grant changes without secrets or prompt data', () => {
+    grantCli('codex')
+    const entries = SecurityGuard.getAgentAuditLog().filter((entry) => entry.action === 'provider-cli.grant')
+    expect(entries.at(-1)).toMatchObject({ allowed: true, metadata: { providerId: 'codex', product: 'qa-studio', granted: true } })
+    expect(JSON.stringify(entries.at(-1))).not.toMatch(/token|prompt|secret/iu)
   })
 
   it('uses a fake adapter, reports capabilities, and excludes caller-controlled process data', async () => {

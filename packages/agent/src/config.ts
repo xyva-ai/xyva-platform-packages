@@ -12,6 +12,7 @@ import { CLI_PROVIDER_IDS_V1, PROVIDER_IDS_V1, type CliProviderIdV1, type Provid
 
 import { getXyvaDir } from './auth.js'
 import { isSealedSecret, readPrivateFile, sealSecret, SecureStoreError, unsealSecret, writePrivateFile } from './secure-store.js'
+import { SecurityGuard } from './utils/SecurityGuard.js'
 
 export interface AgentConfig {
   aiProvider: ProviderIdV1 | null
@@ -350,6 +351,12 @@ export function setQaCliProviderGrant(providerId: unknown, granted: unknown): bo
   if (granted) grants.add(providerId as CliProviderIdV1)
   else grants.delete(providerId as CliProviderIdV1)
   saveConfig({ ...current, qaCliProviderGrants: CLI_PROVIDER_IDS_V1.filter((candidate) => grants.has(candidate)) })
+  SecurityGuard.recordAgentDecision(
+    granted ? 'provider-cli.grant' : 'provider-cli.revoke',
+    true,
+    granted ? 'Local provider CLI grant persisted.' : 'Local provider CLI grant revoked.',
+    { providerId, product: 'qa-studio', granted: Boolean(granted) },
+  )
   return granted
 }
 

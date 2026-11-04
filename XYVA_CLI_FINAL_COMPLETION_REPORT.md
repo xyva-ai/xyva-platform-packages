@@ -67,6 +67,10 @@ Local evidence on the isolated branches:
   distribution manifest/source is configured for production use.
 - Flow runtime execution remains explicitly out of scope; see
   `XYVA_CLI_FLOW_COMPOSITION_BOUNDARY.md`.
+- Flow now contains a typed CLI provider adapter on branch
+  `codex/flow-cli-runtime-bridge`; its authenticated client is not composed into
+  the default runtime, so production Flow execution remains fail-closed.
+- Local CLI grant and revoke operations now emit secret-free agent audit entries.
 - Real authenticated provider sessions and commercial usage authorization remain
   intentionally untested.
 
