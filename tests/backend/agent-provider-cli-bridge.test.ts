@@ -52,17 +52,17 @@ function authorizeFlow(socket: FakeWebSocket): void {
   setBridgeConnectionContext(socket as unknown as WebSocket, { capability: 'provider-bridge.v1', sessionFamilyId: 'flow-family' })
 }
 
-function grantCli(): void {
+function grantCli(provider = 'codex'): void {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-cli-bridge-'))
   stateDirectories.push(parent)
   process.env.XYVA_AGENT_STATE_DIR = path.join(parent, 'state')
-  setQaCliProviderGrant('codex', true)
+  setQaCliProviderGrant(provider, true)
   process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE = '1'
 }
 
-function discovery() {
+function discovery(providerId: 'codex' | 'claude' | 'gemini' = 'codex') {
   return {
-    providerId: 'codex' as const, displayName: 'Codex', command: 'codex', installed: true, executable: true,
+    providerId, displayName: providerId, command: providerId, installed: true, executable: true,
     installationKind: 'system' as const, authentication: 'authenticated' as const, readiness: 'ready' as const,
     version: { installedVersion: '0.1.0', supported: true, minimumVersion: '0.1.0', updateStatus: 'current' as const, updateCommand: null },
     loginCommand: null, installCommand: 'not-used', detail: 'synthetic',
@@ -120,11 +120,30 @@ describe('provider CLI bridge v1', () => {
     authorizeQa(socket)
     await call(socket, 'capabilities', 'providerCliCapabilitiesV1', [{ schemaVersion: 1, requestId: 'cap-1' }])
     await call(socket, 'infer', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-1', providerId: 'codex', mode: 'read_only', prompt: 'synthetic prompt' }])
-    expect(response(socket, 'capabilities')).toMatchObject({ ok: true, data: { status: 'completed', capabilities: [expect.objectContaining({ enabled: true, modes: ['read_only'] })] } })
+    expect(response(socket, 'capabilities')).toMatchObject({ ok: true, data: { status: 'completed', capabilities: expect.arrayContaining([expect.objectContaining({ providerId: 'codex', enabled: true, modes: ['read_only'] }), expect.objectContaining({ providerId: 'claude', enabled: false, modes: [] }), expect.objectContaining({ providerId: 'gemini', enabled: false, modes: [] })]) } })
     expect(response(socket, 'infer')).toMatchObject({ ok: true, data: { status: 'completed', outputText: 'synthetic answer' } })
     expect(infer).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'infer-1', prompt: 'synthetic prompt', signal: expect.any(AbortSignal) }))
     await call(socket, 'unsafe', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-2', providerId: 'codex', mode: 'read_only', prompt: 'x', env: { SECRET: 'x' } }])
     expect(response(socket, 'unsafe')).toMatchObject({ ok: true, data: { status: 'failed', code: 'invalid_request' } })
+  })
+
+  it('dispatches a separately granted Claude request only to the Claude adapter and preserves provider identity', async () => {
+    grantCli('claude')
+    const infer = vi.fn(async () => ({ outputText: 'Claude synthetic answer', inputTokens: 4, outputTokens: 2 }))
+    const claudeAdapter = {
+      providerId: 'claude' as const,
+      discover: async () => discovery('claude'), getReadiness: async () => discovery('claude'), beginLogin: async () => ({ started: false, detail: 'disabled' }),
+      listModels: async () => [], getVersionStatus: async () => discovery('claude').version,
+      cancel: () => false, infer,
+    } as CliProviderAdapter
+    const codexAdapter = fakeRegistry({}).get('codex')!
+    registerAllHandlers({ cliRegistry: { get: (providerId: string) => providerId === 'claude' ? claudeAdapter : providerId === 'codex' ? codexAdapter : undefined, status: async () => [discovery('codex'), discovery('claude'), discovery('gemini')] } })
+    const socket = new FakeWebSocket(); authorizeQa(socket)
+    await call(socket, 'claude-capabilities', 'providerCliCapabilitiesV1', [{ schemaVersion: 1, requestId: 'cap-claude' }])
+    await call(socket, 'claude-infer', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-claude', providerId: 'claude', mode: 'read_only', prompt: 'synthetic' }])
+    expect(response(socket, 'claude-capabilities')).toMatchObject({ ok: true, data: { capabilities: expect.arrayContaining([expect.objectContaining({ providerId: 'claude', enabled: true, modes: ['read_only'] }), expect.objectContaining({ providerId: 'codex', enabled: false }), expect.objectContaining({ providerId: 'gemini', enabled: false, modes: [] })]) } })
+    expect(response(socket, 'claude-infer')).toMatchObject({ ok: true, data: { status: 'completed', providerId: 'claude', outputText: 'Claude synthetic answer' } })
+    expect(infer).toHaveBeenCalledOnce()
   })
 
   it.each([

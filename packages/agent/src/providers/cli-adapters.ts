@@ -29,19 +29,26 @@ type AdapterDefinition = {
   installCommand: string
   loginArgs: readonly string[] | null
   authenticationArgs: readonly string[] | null
+  execution: 'codex' | 'claude' | 'gemini-blocked'
 }
 
 const DEFINITIONS: readonly AdapterDefinition[] = [
-  { providerId: 'codex', displayName: 'Codex CLI', command: 'codex', installCommand: 'npm install -g @openai/codex', loginArgs: ['login', '--device-auth'], authenticationArgs: ['login', 'status'] },
-  { providerId: 'claude', displayName: 'Claude Code CLI', command: 'claude', installCommand: 'npm install -g @anthropic-ai/claude-code', loginArgs: null, authenticationArgs: null },
-  { providerId: 'gemini', displayName: 'Gemini CLI', command: 'gemini', installCommand: 'npm install -g @google/gemini-cli', loginArgs: null, authenticationArgs: null },
+  { providerId: 'codex', displayName: 'Codex CLI', command: 'codex', installCommand: 'npm install -g @openai/codex', loginArgs: ['login', '--device-auth'], authenticationArgs: ['login', 'status'], execution: 'codex' },
+  { providerId: 'claude', displayName: 'Claude Code CLI', command: 'claude', installCommand: 'npm install -g @anthropic-ai/claude-code', loginArgs: null, authenticationArgs: ['auth', 'status', '--json'], execution: 'claude' },
+  // Gemini is discoverable, but execution stays fail-closed until a pinned
+  // no-tool/config-isolation profile is independently demonstrated.
+  { providerId: 'gemini', displayName: 'Gemini CLI', command: 'gemini', installCommand: 'npm install -g @google/gemini-cli', loginArgs: null, authenticationArgs: null, execution: 'gemini-blocked' },
 ]
 
-function safeEnvironment(): NodeJS.ProcessEnv {
+function safeEnvironment(isolatedHome?: string): NodeJS.ProcessEnv {
   const keys = process.platform === 'win32'
-    ? ['PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'USERPROFILE', 'TEMP', 'TMP']
-    : ['PATH', 'HOME', 'TMPDIR', 'LANG']
-  return Object.fromEntries(keys.flatMap((key) => process.env[key] ? [[key, process.env[key]]] : []))
+    ? ['PATH', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'LANG']
+    : ['PATH', 'TMPDIR', 'LANG']
+  const env = Object.fromEntries(keys.flatMap((key) => process.env[key] ? [[key, process.env[key]]] : []))
+  if (!isolatedHome) return env
+  return process.platform === 'win32'
+    ? { ...env, USERPROFILE: isolatedHome, APPDATA: isolatedHome, LOCALAPPDATA: isolatedHome, HOME: isolatedHome }
+    : { ...env, HOME: isolatedHome, XDG_CONFIG_HOME: path.join(isolatedHome, '.config'), XDG_CACHE_HOME: path.join(isolatedHome, '.cache') }
 }
 
 function versionFromOutput(value: string): string | null {
@@ -67,14 +74,14 @@ export class GenericCliAdapter implements CliProviderAdapter {
 
   public get providerId(): CliProviderId { return this.definition.providerId }
 
-  public async discover(): Promise<CliDiscoveryStatus> {
+  public async discover(signal?: AbortSignal): Promise<CliDiscoveryStatus> {
     const resolved = await this.resolver.resolve(this.definition.command)
     if (!resolved.trusted || !resolved.executablePath) {
       return this.status(this.versions.status(this.providerId, null), false, 'unavailable', resolved.detail, null)
     }
     const result = await this.runner.run({
       command: resolved.executablePath,
-      args: ['--version'], cwd: os.tmpdir(), env: safeEnvironment(), timeoutMs: DISCOVERY_TIMEOUT_MS, maxOutputBytes: 4_096,
+      args: ['--version'], cwd: os.tmpdir(), env: safeEnvironment(), signal, timeoutMs: DISCOVERY_TIMEOUT_MS, maxOutputBytes: 4_096,
     })
     const installedVersion = result.exitCode === 0 && !result.timedOut && !result.cancelled
       ? versionFromOutput(`${result.stdout}\n${result.stderr}`)
@@ -82,9 +89,14 @@ export class GenericCliAdapter implements CliProviderAdapter {
     const version = this.versions.status(this.providerId, installedVersion)
     if (!installedVersion) return this.status(version, false, 'unavailable', 'Trusted CLI could not be executed.', resolved.installationKind)
     if (!version.supported) return this.status(version, true, 'unsupported_version', 'Installed CLI version is outside the supported matrix.', resolved.installationKind)
-    const authentication = await this.authenticationStatus(resolved.executablePath)
+    const authentication = await this.authenticationStatus(resolved.executablePath, signal)
+    const readiness = authentication === 'authenticated'
+      ? 'ready'
+      : authentication === 'not_authenticated'
+        ? 'login_required'
+        : 'authentication_unknown'
     return {
-      ...this.status(version, true, authentication === 'not_checked' ? 'authentication_unknown' : 'ready', authentication === 'authenticated' ? 'CLI is installed and authenticated.' : 'CLI is installed; authentication was not confirmed.', resolved.installationKind),
+      ...this.status(version, true, readiness, authentication === 'authenticated' ? 'CLI is installed and authenticated.' : authentication === 'not_authenticated' ? 'CLI is installed; login is required.' : 'CLI is installed; authentication was not confirmed.', resolved.installationKind),
       authentication,
     }
   }
@@ -99,8 +111,13 @@ export class GenericCliAdapter implements CliProviderAdapter {
   public async listModels(): Promise<string[]> { return [] }
 
   public async infer(request: CliInferenceRequest): Promise<CliInferenceResult> {
-    if (this.providerId !== 'codex') throw new Error('CLI inference is not implemented for this provider')
-    if (process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE !== '1') throw new Error('Codex CLI inference is disabled pending compliance approval')
+    if (this.definition.execution === 'gemini-blocked') {
+      throw new Error('Gemini CLI inference is disabled pending sandbox and compliance approval')
+    }
+    if (process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_TEST_MODE !== '1'
+      && !(this.providerId === 'codex' && process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE === '1')) {
+      throw new Error(`${this.definition.displayName} inference is disabled pending compliance approval`)
+    }
     if (typeof request.prompt !== 'string' || !request.prompt.trim() || Buffer.byteLength(request.prompt, 'utf8') > MAX_PROMPT_BYTES) {
       throw new Error('Invalid CLI inference request')
     }
@@ -109,19 +126,25 @@ export class GenericCliAdapter implements CliProviderAdapter {
     request.signal?.addEventListener('abort', abort, { once: true })
     let taskDirectory: string | undefined
     try {
+      const readiness = await this.discover(lease.signal)
+      if (lease.signal.aborted) throw new Error('CLI inference cancelled')
+      if (!readiness.installed) throw new Error('CLI executable is unavailable or untrusted')
+      if (!readiness.version.supported) throw new Error('CLI version is unsupported')
+      if (readiness.authentication !== 'authenticated') throw new Error('CLI is not authenticated')
       const resolved = await this.resolver.resolve(this.definition.command)
       if (!resolved.trusted || !resolved.executablePath) throw new Error('CLI executable is unavailable or untrusted')
-      taskDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-codex-task-'))
+      taskDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `xyva-${this.providerId}-task-`))
+      const invocation = this.executionInvocation(taskDirectory)
       const result = await this.runner.run({
         command: resolved.executablePath,
-        args: ['exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only', '--skip-git-repo-check', '--json', '-C', taskDirectory, '-'],
-        cwd: taskDirectory, env: safeEnvironment(), stdin: request.prompt, signal: lease.signal, timeoutMs: INFERENCE_TIMEOUT_MS, maxStdoutBytes: MAX_OUTPUT_BYTES, maxStderrBytes: MAX_OUTPUT_BYTES,
+        args: invocation,
+        cwd: taskDirectory, env: safeEnvironment(taskDirectory), stdin: request.prompt, signal: lease.signal, timeoutMs: INFERENCE_TIMEOUT_MS, maxStdoutBytes: MAX_OUTPUT_BYTES, maxStderrBytes: MAX_OUTPUT_BYTES,
       })
       if (result.cancelled) throw new Error('CLI inference cancelled')
       if (result.timedOut) throw new Error('CLI inference timed out')
       if (result.outputLimitExceeded) throw new Error('CLI inference exceeded output limit')
       if (result.exitCode !== 0) throw new Error('CLI inference failed')
-      const parsed = parseCodexJsonl(result.stdout)
+      const parsed = this.definition.execution === 'codex' ? parseCodexJsonl(result.stdout) : parseClaudeJson(result.stdout)
       if (!parsed.outputText) throw new Error('CLI inference returned no output')
       return parsed
     } finally {
@@ -137,10 +160,10 @@ export class GenericCliAdapter implements CliProviderAdapter {
 
   public async getVersionStatus(): Promise<CliVersionStatus> { return (await this.discover()).version }
 
-  private async authenticationStatus(command: string): Promise<CliDiscoveryStatus['authentication']> {
+  private async authenticationStatus(command: string, signal?: AbortSignal): Promise<CliDiscoveryStatus['authentication']> {
     if (!this.definition.authenticationArgs) return 'not_checked'
     const result = await this.runner.run({
-      command, args: this.definition.authenticationArgs, cwd: os.tmpdir(), env: safeEnvironment(), timeoutMs: DISCOVERY_TIMEOUT_MS, maxOutputBytes: 4_096,
+      command, args: this.definition.authenticationArgs, cwd: os.tmpdir(), env: safeEnvironment(), signal, timeoutMs: DISCOVERY_TIMEOUT_MS, maxOutputBytes: 4_096,
     })
     if (result.exitCode !== 0 || result.timedOut || result.cancelled) return 'not_authenticated'
     return /not logged|not authenticated|logged out/iu.test(`${result.stdout}\n${result.stderr}`) ? 'not_authenticated' : 'authenticated'
@@ -155,6 +178,21 @@ export class GenericCliAdapter implements CliProviderAdapter {
       installCommand: this.definition.installCommand, detail,
     }
   }
+
+  private executionInvocation(taskDirectory: string): readonly string[] {
+    if (this.definition.execution === 'codex') {
+      return ['exec', '--ephemeral', '--ignore-user-config', '--ignore-rules', '--sandbox', 'read-only', '--skip-git-repo-check', '--json', '-C', taskDirectory, '-']
+    }
+    if (this.definition.execution === 'claude') {
+      return ['-p', '--output-format', 'json', '--no-session-persistence', '--tools', '', '--disallowedTools', 'mcp__*', '--restricted', '--permission-prompts', 'none']
+    }
+    throw new Error('CLI inference is disabled pending compliance approval')
+  }
+}
+
+/** A provider may be discoverable before its command profile is safe to run. */
+export function isCliProviderExecutionSupported(providerId: CliProviderId): boolean {
+  return providerId !== 'gemini'
 }
 
 function parseCodexJsonl(stdout: string): CliInferenceResult {
@@ -176,6 +214,19 @@ function parseCodexJsonl(stdout: string): CliInferenceResult {
     } catch { /* JSONL may contain harmless CLI notices; they are not surfaced. */ }
   }
   return { outputText, inputTokens, outputTokens }
+}
+
+function parseClaudeJson(stdout: string): CliInferenceResult {
+  try {
+    const value = JSON.parse(stdout) as Record<string, unknown>
+    const outputText = typeof value.result === 'string' ? value.result : ''
+    const usage = value.usage && typeof value.usage === 'object' ? value.usage as Record<string, unknown> : {}
+    return {
+      outputText,
+      inputTokens: typeof usage.input_tokens === 'number' && Number.isSafeInteger(usage.input_tokens) && usage.input_tokens >= 0 ? usage.input_tokens : null,
+      outputTokens: typeof usage.output_tokens === 'number' && Number.isSafeInteger(usage.output_tokens) && usage.output_tokens >= 0 ? usage.output_tokens : null,
+    }
+  } catch { return { outputText: '', inputTokens: null, outputTokens: null } }
 }
 
 export function createCliAdapters(

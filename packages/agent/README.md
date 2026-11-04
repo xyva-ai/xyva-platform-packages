@@ -111,10 +111,10 @@ expires after 60 seconds, and is challenge-bound to that exact local Flow pairin
 reconnection after the five-minute family lease requires a new browser-session check and grant;
 Flow never receives the Agent license token and the Agent never receives the Flow browser cookie.
 
-## Isolated Codex CLI bridge (test-only)
+## Isolated official CLI bridge (test-only)
 
 `ProviderCliBridgeV1` is deliberately separate from `ProviderBridgeV1`: it can
-only address an existing local Codex CLI login and never accepts API keys,
+describe the official Codex, Claude Code, and Gemini CLIs and never accepts API keys,
 provider endpoints, paths, shell arguments, or environment values from a
 browser. It is default-deny, exposes only `read_only`, and is limited to an
 authenticated QA Studio bridge session. Flow cannot call this surface.
@@ -124,18 +124,29 @@ on the same machine:
 
 ```bash
 XYVA_AGENT_ENABLE_PROVIDER_CLI_BRIDGE_TEST_MODE=1 \
-  npx @xyva/agent provider cli grant codex --product qa-studio --yes
+  npx @xyva/agent provider cli grant claude --product qa-studio --yes
 ```
 
 Revocation is explicit and immediately returns the bridge to product-denied:
 
 ```bash
-npx @xyva/agent provider cli grant codex --product qa-studio --revoke --yes
+npx @xyva/agent provider cli grant claude --product qa-studio --revoke --yes
 ```
 
-The environment switch is intentionally not persisted. The command records
+Grants are per provider and intentionally not persisted in the environment.
+The command records
 only the local non-secret QA Studio consent; it never performs login, reads a
 session file, installs or updates a provider CLI, or starts a model request.
 CLI discovery may report installation/authentication readiness but does not
 perform inference. Commercial use, Windows device acceptance, and any provider
 terms review are separate gates.
+
+`provider cli status`, `provider cli list`, and `provider cli doctor` are
+read-only. `provider cli update [provider]` reports only approved update
+guidance; it does not install, upgrade, or modify globally managed CLIs.
+Codex and Claude have isolated fake-process execution profiles for the explicit
+test mode. Those profiles receive prompts on stdin, use a disposable work/home
+area, and deliberately cannot reuse a person's file-backed provider session.
+Gemini is discoverable but task execution remains disabled until its no-tool,
+configuration-isolation, session, and provider-compliance gates have direct
+evidence. None of these test profiles authorizes production inference.

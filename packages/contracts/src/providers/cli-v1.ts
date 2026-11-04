@@ -1,6 +1,11 @@
 /** Transport-safe contract for the separately authorized local CLI gateway. */
 
-export const CLI_PROVIDER_IDS_V1 = ['codex'] as const
+/**
+ * Official CLIs that the transport can describe. Listing a provider here is
+ * not an execution grant: calls still need product capability, a local grant,
+ * and the explicit test-mode gate.
+ */
+export const CLI_PROVIDER_IDS_V1 = ['codex', 'claude', 'gemini'] as const
 export type CliProviderIdV1 = (typeof CLI_PROVIDER_IDS_V1)[number]
 export const CLI_EXECUTION_MODES_V1 = ['read_only'] as const
 export type CliExecutionModeV1 = (typeof CLI_EXECUTION_MODES_V1)[number]

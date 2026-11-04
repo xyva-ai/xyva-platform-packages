@@ -13,10 +13,13 @@ import { CliAdapterRegistry } from '../../packages/agent/src/providers/cli-regis
 import type { CliCommandResolver, CliProcessRunner } from '../../packages/agent/src/providers/cli-types.js'
 
 const originalTestMode = process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE
+const originalProviderTestMode = process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_TEST_MODE
 
 afterEach(() => {
   if (originalTestMode === undefined) delete process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE
   else process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE = originalTestMode
+  if (originalProviderTestMode === undefined) delete process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_TEST_MODE
+  else process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_TEST_MODE = originalProviderTestMode
 })
 
 function fakeRunner(handler: (input: Parameters<CliProcessRunner['run']>[0]) => Awaited<ReturnType<CliProcessRunner['run']>>): CliProcessRunner {
@@ -29,6 +32,16 @@ const trustedResolver: CliCommandResolver = {
 
 function adapters(runner: CliProcessRunner, processes = new CliProcessManager()) {
   return createCliAdapters(runner, { resolver: trustedResolver, processes })
+}
+
+function readyDiscoveryResult(input: Parameters<CliProcessRunner['run']>[0]) {
+  if (input.args.length === 1 && input.args[0] === '--version') {
+    return { exitCode: 0, stdout: input.command === 'claude' ? 'claude 2.1.259' : 'codex-cli 0.162.1', stderr: '', timedOut: false, cancelled: false }
+  }
+  if (input.args.join(' ') === 'login status' || input.args.join(' ') === 'auth status --json') {
+    return { exitCode: 0, stdout: 'logged in', stderr: '', timedOut: false, cancelled: false }
+  }
+  return null
 }
 
 async function waitForRecordedPid(pidFile: string, timeoutMs = 2_000): Promise<number> {
@@ -94,6 +107,8 @@ describe('Codex CLI pilot execution policy', () => {
     process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE = '1'
     let observed: Parameters<CliProcessRunner['run']>[0] | undefined
     const adapter = adapters(fakeRunner(async (input) => {
+      const discovery = readyDiscoveryResult(input)
+      if (discovery) return discovery
       observed = input
       return {
         exitCode: 0,
@@ -113,11 +128,75 @@ describe('Codex CLI pilot execution policy', () => {
     process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE = '1'
     const controller = new AbortController()
     const adapter = adapters(fakeRunner(async (input) => {
+      const discovery = readyDiscoveryResult(input)
+      if (discovery) return discovery
       controller.abort()
       expect(input.signal?.aborted).toBe(true)
       return { exitCode: 1, stdout: '', stderr: 'sensitive', timedOut: false, cancelled: true }
     })).get('codex')!
     await expect(adapter.infer({ requestId: 'cancel-request', prompt: 'cancel', signal: controller.signal })).rejects.toThrow('CLI inference cancelled')
+  })
+
+  it('never starts provider execution when cancellation arrives during discovery', async () => {
+    process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE = '1'
+    let releaseVersion: (() => void) | undefined
+    let discoveryStarted: (() => void) | undefined
+    let executionCalled = false
+    const started = new Promise<void>((resolve) => { discoveryStarted = resolve })
+    const adapter = adapters(fakeRunner(async (input) => {
+      if (input.args.join(' ') === '--version') {
+        discoveryStarted!()
+        await new Promise<void>((resolve) => { releaseVersion = resolve })
+        return { exitCode: 0, stdout: 'codex-cli 0.162.1', stderr: '', timedOut: false, cancelled: false }
+      }
+      if (input.args.join(' ') === 'login status') return { exitCode: 0, stdout: 'logged in', stderr: '', timedOut: false, cancelled: false }
+      executionCalled = true
+      return { exitCode: 0, stdout: '{"type":"item.completed","item":{"type":"agent_message","text":"unexpected"}}', stderr: '', timedOut: false, cancelled: false }
+    })).get('codex')!
+    const pending = adapter.infer({ requestId: 'cancel-during-discovery', prompt: 'synthetic' })
+    await started
+    expect(adapter.cancel('cancel-during-discovery')).toBe(true)
+    releaseVersion!()
+    await expect(pending).rejects.toThrow('CLI inference cancelled')
+    expect(executionCalled).toBe(false)
+  })
+})
+
+describe('provider-specific official CLI execution profiles', () => {
+  it('runs Claude only behind the explicit local test gate with fixed no-tool arguments and an isolated home', async () => {
+    process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_TEST_MODE = '1'
+    let observed: Parameters<CliProcessRunner['run']>[0] | undefined
+    const adapter = adapters(fakeRunner(async (input) => {
+      const discovery = readyDiscoveryResult(input)
+      if (discovery) return discovery
+      observed = input
+      return { exitCode: 0, stdout: JSON.stringify({ result: 'Claude OK', usage: { input_tokens: 2, output_tokens: 1 } }), stderr: 'never surface this', timedOut: false, cancelled: false }
+    })).get('claude')!
+    await expect(adapter.infer({ requestId: 'claude-safe-request', prompt: '$(do-not-execute) never put this in argv' })).resolves.toEqual({ outputText: 'Claude OK', inputTokens: 2, outputTokens: 1 })
+    expect(observed).toBeDefined()
+    expect(observed!.args).toEqual(['-p', '--output-format', 'json', '--no-session-persistence', '--tools', '', '--disallowedTools', 'mcp__*', '--restricted', '--permission-prompts', 'none'])
+    expect(observed!.stdin).toContain('never put this in argv')
+    expect(observed!.args.join(' ')).not.toContain('never put this in argv')
+    expect(observed!.env.HOME).toBe(observed!.cwd)
+    expect(observed!.env).not.toHaveProperty('ANTHROPIC_API_KEY')
+  })
+
+  it('keeps Gemini task execution fail-closed even when the generic local test gate is set', async () => {
+    process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_TEST_MODE = '1'
+    let called = false
+    const adapter = adapters(fakeRunner(async () => { called = true; return { exitCode: 0, stdout: '', stderr: '', timedOut: false, cancelled: false } })).get('gemini')!
+    await expect(adapter.infer({ requestId: 'gemini-denied', prompt: 'synthetic' })).rejects.toThrow('disabled pending sandbox and compliance approval')
+    expect(called).toBe(false)
+  })
+
+  it('reports a documented Claude login-status failure as login_required without reflecting diagnostics', async () => {
+    const adapter = adapters(fakeRunner(async (input) => input.args[0] === '--version'
+      ? { exitCode: 0, stdout: 'claude 2.1.259', stderr: '', timedOut: false, cancelled: false }
+      : { exitCode: 1, stdout: '', stderr: 'credential=/private/value', timedOut: false, cancelled: false }
+    )).get('claude')!
+    const status = await adapter.discover()
+    expect(status).toMatchObject({ authentication: 'not_authenticated', readiness: 'login_required' })
+    expect(JSON.stringify(status)).not.toContain('/private/value')
   })
 })
 
@@ -152,11 +231,15 @@ describe('trusted command and request lifecycle policy', () => {
   it('cancels only the addressed request and cleans up completed leases', async () => {
     process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE = '1'
     const manager = new CliProcessManager(2, 2)
-    const adapter = adapters(fakeRunner(async (input) => await new Promise((resolve) => {
+    const adapter = adapters(fakeRunner(async (input) => {
+      const discovery = readyDiscoveryResult(input)
+      if (discovery) return discovery
+      return await new Promise((resolve) => {
       if (input.signal?.aborted) { resolve({ exitCode: 1, stdout: '', stderr: 'never expose', timedOut: false, cancelled: true }); return }
       input.signal?.addEventListener('abort', () => resolve({ exitCode: 1, stdout: '', stderr: 'never expose', timedOut: false, cancelled: true }), { once: true })
       if (input.stdin === 'second') setTimeout(() => resolve({ exitCode: 0, stdout: '{"type":"item.completed","item":{"type":"agent_message","text":"second"}}', stderr: '', timedOut: false, cancelled: false }), 5)
-    })), manager).get('codex')!
+      })
+    }), manager).get('codex')!
     const first = adapter.infer({ requestId: 'request-one', prompt: 'first' })
     const second = adapter.infer({ requestId: 'request-two', prompt: 'second' })
     expect(adapter.cancel('request-one')).toBe(true)
@@ -170,7 +253,11 @@ describe('trusted command and request lifecycle policy', () => {
     process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE = '1'
     let release: (() => void) | undefined
     const manager = new CliProcessManager(1, 2)
-    const adapter = adapters(fakeRunner(async () => await new Promise((resolve) => { release = () => resolve({ exitCode: 37, stdout: '', stderr: 'secret', timedOut: false, cancelled: false }) })), manager).get('codex')!
+    const adapter = adapters(fakeRunner(async (input) => {
+      const discovery = readyDiscoveryResult(input)
+      if (discovery) return discovery
+      return await new Promise((resolve) => { release = () => resolve({ exitCode: 37, stdout: '', stderr: 'secret', timedOut: false, cancelled: false }) })
+    }), manager).get('codex')!
     const first = adapter.infer({ requestId: 'crash-one', prompt: 'first' })
     await expect(adapter.infer({ requestId: 'crash-two', prompt: 'second' })).rejects.toThrow('busy')
     release!()

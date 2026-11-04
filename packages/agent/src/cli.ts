@@ -13,6 +13,7 @@ import {
   setFlowProviderGrantFromCli,
 } from './provider-cli.js'
 import { setQaCliProviderGrant } from './config.js'
+import { CLI_PROVIDER_IDS } from './providers/cli-types.js'
 import { startServer } from './server.js'
 import { CliAdapterRegistry } from './providers/cli-registry.js'
 import { AGENT_VERSION } from './version.js'
@@ -180,18 +181,40 @@ providerCliCommand
   })
 
 providerCliCommand
+  .command('list')
+  .description('Alias for secret-free official CLI status')
+  .option('--json', 'Print machine-readable JSON')
+  .action(async (options) => {
+    const statuses = await new CliAdapterRegistry().status()
+    console.log(options.json ? JSON.stringify(statuses, null, 2) : statuses.map((status) => `${status.providerId} ${status.readiness}`).join('\n'))
+  })
+
+providerCliCommand
+  .command('update')
+  .description('Show consent-required update guidance; this agent never mutates global CLI installations')
+  .argument('[provider]', 'codex, claude, or gemini')
+  .action(async (provider) => {
+    if (provider !== undefined && !CLI_PROVIDER_IDS.includes(provider)) throw new Error('Unknown official CLI provider')
+    const statuses = await new CliAdapterRegistry().status()
+    for (const status of statuses.filter((candidate) => provider === undefined || candidate.providerId === provider)) {
+      const guidance = status.version.updateCommand || 'No approved update command is recorded.'
+      console.log(`${status.providerId}: no update executed; installation=${status.installationKind || 'missing'}; guidance=${guidance}`)
+    }
+  })
+
+providerCliCommand
   .command('grant')
-  .description('Locally grant or revoke QA Studio access to the isolated Codex CLI bridge')
-  .argument('<provider>', 'codex')
+  .description('Locally grant or revoke QA Studio access to one isolated official CLI adapter')
+  .argument('<provider>', 'codex, claude, or gemini')
   .requiredOption('--product <product>', 'Product receiving the local grant (qa-studio)')
   .option('--revoke', 'Revoke instead of grant')
   .option('--yes', 'Confirm this local bridge consent change')
   .action((provider, options) => {
-    if (provider !== 'codex' || options.product !== 'qa-studio' || options.yes !== true) {
-      throw new Error('CLI bridge grant requires codex, qa-studio and --yes')
+    if (!CLI_PROVIDER_IDS.includes(provider) || options.product !== 'qa-studio' || options.yes !== true) {
+      throw new Error('CLI bridge grant requires a supported provider, qa-studio and --yes')
     }
-    const granted = setQaCliProviderGrant('codex', options.revoke !== true)
-    console.log(chalk.green(granted ? 'Granted Codex CLI bridge to QA Studio.' : 'Revoked Codex CLI bridge from QA Studio.'))
+    const granted = setQaCliProviderGrant(provider, options.revoke !== true)
+    console.log(chalk.green(granted ? `Granted ${provider} CLI bridge to QA Studio.` : `Revoked ${provider} CLI bridge from QA Studio.`))
   })
 
 providerCommand

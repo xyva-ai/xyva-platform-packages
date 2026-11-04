@@ -20,7 +20,7 @@ export interface CliDiscoveryStatus {
   executable: boolean
   installationKind: CliInstallationKind | null
   authentication: CliAuthenticationStatus
-  readiness: 'ready' | 'not_installed' | 'unsupported_version' | 'authentication_unknown' | 'disabled' | 'unavailable'
+  readiness: 'ready' | 'not_installed' | 'unsupported_version' | 'login_required' | 'authentication_unknown' | 'disabled' | 'unavailable'
   version: CliVersionStatus
   loginCommand: string | null
   installCommand: string

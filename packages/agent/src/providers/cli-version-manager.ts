@@ -12,7 +12,9 @@ export interface CliCompatibilityEntry {
  */
 export const DEFAULT_CLI_COMPATIBILITY_MATRIX: Readonly<Record<CliProviderId, CliCompatibilityEntry>> = {
   codex: { minimumVersion: '0.162.0', updateCommand: 'npm install -g @openai/codex' },
-  claude: { minimumVersion: null, updateCommand: 'npm install -g @anthropic-ai/claude-code' },
+  // The Claude execution profile uses flags documented in the 2.1.259 line.
+  // Older installations remain discoverable but are not eligible for tasks.
+  claude: { minimumVersion: '2.1.259', updateCommand: 'npm install -g @anthropic-ai/claude-code' },
   gemini: { minimumVersion: '0.64.0', updateCommand: 'npm install -g @google/gemini-cli' },
 }
 
