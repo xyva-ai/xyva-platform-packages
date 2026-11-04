@@ -22,10 +22,11 @@ Overall result: `XYVA_CLI_TECHNICALLY_COMPLETE_EXTERNAL_GATES_PENDING`
 Platform Packages draft PR #23:
 
 - branch `codex/provider-cli-bridge-v1`
-- head `605942944fd5d390b857871e5a6c4b70bc85d083`
-- public verification run `41802969955`: Node 22 and Node 24 PASS
-- implementation commits `30494bf8034123f249d539f48d993ba42c7754cb` and
-  `605942944fd5d390b857871e5a6c4b70bc85d083`: targeted adapter/lifecycle tests
+- head `2043894457fce8a1787d650984fd5e316a4dd231`
+- public verification run `41803233030`: Node 22 and Node 24 PASS
+- implementation commits `30494bf8034123f249d539f48d993ba42c7754cb`,
+  `605942944fd5d390b857871e5a6c4b70bc85d083` and
+  `2043894457fce8a1787d650984fd5e316a4dd231`: targeted adapter/lifecycle tests
   20/20 PASS; bridge contract tests 15/15 PASS; `npm run verify:public` 190
   PASS, 5 documented platform skips.
 

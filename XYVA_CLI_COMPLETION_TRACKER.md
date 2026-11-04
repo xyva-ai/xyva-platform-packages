@@ -17,7 +17,7 @@ Status values are evidence-based as of the current isolated CLI worktree.
 | CLI-10 | Flow integration | xyva-flow | NOT_EXECUTED / out of current confirmed scope | generic ProviderBridgeV1 only; no CLI boundary | explicit product composition decision; no parallel engine |
 | CLI-11 | Entitlements, grants and audit | platform-packages | PARTIAL | non-secret per-provider local grant + QA capability contract; bridge rejects missing/revoked grants | product identity/licensing integration and independent audit review pending |
 | CLI-12 | Provider compliance | cross-provider | PARTIAL | documented operational boundary; default deny and no session extraction | current provider terms and real execution mode must be independently verified |
-| CLI-13 | Release candidate evidence | cross-repository | VERIFIED (scoped) | platform PR #23 head `6059429`, run `41802969955`; QA Studio PR #137 at `158adabb`, run `41794619559`; PR #16 Windows run `41797366842` | native device, human review and commercial/external gates remain |
+| CLI-13 | Release candidate evidence | cross-repository | VERIFIED (scoped) | platform PR #23 head `2043894`, run `41803233030`; QA Studio PR #137 at `158adabb`, run `41794619559`; PR #16 Windows run `41797366842` | native device, human review and commercial/external gates remain |
 
 ## Current external gates
 
@@ -41,10 +41,10 @@ Status values are evidence-based as of the current isolated CLI worktree.
   The commands were `provider cli status --json`, `provider cli doctor`, and
   reporting-only `provider cli update`. No login, inference, installation, or
   update was performed.
-- Platform Packages draft PR #23 head `605942944fd5d390b857871e5a6c4b70bc85d083`:
+- Platform Packages draft PR #23 head `2043894457fce8a1787d650984fd5e316a4dd231`:
   Gemini fixed-profile support, signed lifecycle API, status integrity fields
   and Flow composition boundary are committed and pushed. Public verification
-  run `41802969955` completed successfully on Node 22 and Node 24.
+  run `41803233030` completed successfully on Node 22 and Node 24.
   This is package compatibility evidence, not Windows 11 device acceptance or
   real-provider evidence.
 - QA Studio draft PR #137 head `158adabb3302f69ad4b9ac269255e313e895e461`: local
