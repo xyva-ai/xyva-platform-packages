@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "artifact": "xyva-cli-release-candidate",
+  "status": "XYVA_CLI_PARTIALLY_COMPLETE",
+  "source": {
+    "platformPackages": {"branch": "codex/provider-cli-bridge-v1", "head": "d7833b5", "pr": 23},
+    "qaStudio": {"branch": "codex/qa-studio-cli-bridge-integration", "head": "36c757d", "pr": 137}
+  },
+  "evidence": {
+    "platformHostedRun": 41793971112,
+    "qaInitialRun": 41793691520,
+    "qaFollowupRun": 41794208174
+  },
+  "sha256Binding": "NOT_APPLICABLE_SOURCE_MANIFEST_ONLY",
+  "providerInference": "NOT_EXECUTED",
+  "nativeWindows11": "NOT_EXECUTED",
+  "mergeReleaseDeployment": "NOT_PERFORMED",
+  "knownExternalGates": [
+    "trusted native Windows 11 target",
+    "PR16 Windows compatibility correction",
+    "authenticated QA browser E2E",
+    "independent human security review",
+    "provider-authorized commercial operating modes"
+  ]
+}

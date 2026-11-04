@@ -43,9 +43,9 @@ Status values are evidence-based as of the current isolated CLI worktree.
 - Platform Packages draft PR #23 head `96a481dd48b101fc6badd6b54ae2bc427c8fdc9b`:
   the cross-socket request-ID namespace fix is committed and pushed. The prior
   GitHub-hosted Node 22/24 run `41791139547` completed successfully at the
-  preceding head; a new run for this fix remains required/under observation.
-  This is package compatibility evidence, not Windows 11 device acceptance or
-  real-provider evidence.
+  preceding head; follow-up public-verification run `41793971112` completed
+  successfully on Node 22 and Node 24. This is package compatibility evidence,
+  not Windows 11 device acceptance or real-provider evidence.
 - QA Studio draft PR #137 head `d985470`:
   local contracts/bridge/agent checks, focused provider CLI suite (28 passed,
   2 platform skips), portal Next build, and portal browser identity test (14

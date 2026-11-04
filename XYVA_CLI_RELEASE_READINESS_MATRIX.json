@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-04",
+  "result": "XYVA_CLI_PARTIALLY_COMPLETE",
+  "repositories": {
+    "platformPackages": {
+      "branch": "codex/provider-cli-bridge-v1",
+      "head": "d7833b5",
+      "pullRequest": 23,
+      "ci": [{"runId": 41793971112, "result": "PASS", "scope": "public Node 22/24 verification"}]
+    },
+    "qaStudio": {
+      "branch": "codex/qa-studio-cli-bridge-integration",
+      "head": "36c757d",
+      "pullRequest": 137,
+      "ci": [
+        {"runId": 41793691520, "result": "FAIL", "reason": "process-tree cleanup race"},
+        {"runId": 41794208174, "result": "PENDING_FINAL_OBSERVATION"}
+      ]
+    }
+  },
+  "gates": {
+    "registryDiscoveryVersion": "PASS",
+    "safeProcessLifecycle": "PASS_LOCAL_SCOPED",
+    "providerCliBridgeV1": "PASS_LOCAL_SCOPED",
+    "macosCompatibility": "PASS_SCOPED",
+    "qaStudioPackageIntegration": "IN_PROGRESS",
+    "windowsHostedCompatibility": "BLOCKED_PR16",
+    "nativeWindows11": "NOT_EXECUTED",
+    "flowIntegration": "NOT_EXECUTED_OUT_OF_CONFIRMED_SCOPE",
+    "browserE2E": "NOT_EXECUTED_AUTHENTICATED_AGENT",
+    "providerCompliance": "PARTIAL_EXTERNAL_REVIEW",
+    "managedUpdates": "PARTIAL_GUIDANCE_ONLY",
+    "humanSecurityReview": "NOT_EXECUTED"
+  },
+  "releaseReady": false
+}
