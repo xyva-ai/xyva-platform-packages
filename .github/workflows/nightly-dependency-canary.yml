@@ -56,7 +56,7 @@ jobs:
           npm run build:public; rc=$?; node scripts/ci/record-test-result.mjs build "$([ $rc -eq 0 ] && echo PASS || echo FAIL)"; test $rc -eq 0
           npm run typecheck:public; rc=$?; node scripts/ci/record-test-result.mjs typecheck "$([ $rc -eq 0 ] && echo PASS || echo FAIL)"; test $rc -eq 0
           npm run test:public; rc=$?; node scripts/ci/record-test-result.mjs publicRegression "$([ $rc -eq 0 ] && echo PASS || echo FAIL)"; test $rc -eq 0
-          node scripts/ci/record-test-result.mjs security PASS
+          npx vitest run tests/backend/agent-security-hardening.test.ts tests/backend/agent-windows-secure-store.test.ts -c vitest.public.config.ts; rc=$?; node scripts/ci/record-test-result.mjs security "$([ $rc -eq 0 ] && echo PASS || echo FAIL)"; test $rc -eq 0
       - name: Run audit and package dry-run
         shell: bash
         run: |
@@ -121,11 +121,18 @@ jobs:
           $rc = $LASTEXITCODE
           node scripts/ci/record-test-result.mjs build $(if ($rc -eq 0) { 'PASS' } else { 'FAIL' })
           if ($rc -ne 0) { throw "agent build failed with exit code $rc" }
+          npm run typecheck:public
+          $rc = $LASTEXITCODE
+          node scripts/ci/record-test-result.mjs typecheck $(if ($rc -eq 0) { 'PASS' } else { 'FAIL' })
+          if ($rc -ne 0) { throw "public typecheck failed with exit code $rc" }
+          npx vitest run tests/backend/agent-security-hardening.test.ts tests/backend/agent-windows-secure-store.test.ts -c vitest.public.config.ts
+          $rc = $LASTEXITCODE
+          node scripts/ci/record-test-result.mjs security $(if ($rc -eq 0) { 'PASS' } else { 'FAIL' })
+          if ($rc -ne 0) { throw "security suite failed with exit code $rc" }
           npm run verify:public
           $rc = $LASTEXITCODE
           node scripts/ci/record-test-result.mjs publicRegression $(if ($rc -eq 0) { 'PASS' } else { 'FAIL' })
           if ($rc -ne 0) { throw "public verification failed with exit code $rc" }
-          node scripts/ci/record-test-result.mjs security PASS
           npm audit --audit-level=high
           if ($LASTEXITCODE -ne 0) { throw "npm audit failed with exit code $LASTEXITCODE" }
           npm pack --workspace @xyva/agent --dry-run
