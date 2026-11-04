@@ -31,10 +31,10 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.23.4"
   },
   "devDependencies": {
-    "tsup": "^8.5.0"
+    "tsup": "9.0.0"
   },
   "scripts": {
     "build": "tsup src/index.ts src/providers/v1.ts --format esm --dts --outDir dist --clean",

@@ -54,7 +54,7 @@ function authResult(version = '0.1.13') {
   return {
     type: 'auth-result',
     ok: true,
-    agent: { version, platform: 'darwin', node: 'v22.14.0' },
+    agent: { version, platform: 'darwin', node: 'v22.23.4' },
     protocolVersion: BRIDGE_PROTOCOL_VERSION,
   }
 }

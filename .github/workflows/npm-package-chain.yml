@@ -57,7 +57,7 @@ jobs:
           case "$RELEASE_MODE" in bootstrap) test "$TRUST_CONFIRMATION" = "BOOTSTRAP_IRREVERSIBLE" ;; oidc) test "$TRUST_CONFIRMATION" = "OIDC_TRUST_CONFIGURED" ;; *) exit 1 ;; esac
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "24.18.0"
+          node-version: "24.22.2"
           registry-url: https://registry.npmjs.org
       - run: npm install --global npm@11.21.0 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund && npm run verify:public
@@ -133,7 +133,7 @@ jobs:
           XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "24.18.0"
+          node-version: "24.22.2"
           registry-url: https://registry.npmjs.org
       - run: npm install --global npm@11.21.0 --ignore-scripts --no-audit --no-fund
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -179,7 +179,7 @@ jobs:
           XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "24.18.0"
+          node-version: "24.22.2"
           registry-url: https://registry.npmjs.org
       - run: npm install --global npm@11.21.0 --ignore-scripts --no-audit --no-fund
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
