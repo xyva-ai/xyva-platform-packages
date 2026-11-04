@@ -20,8 +20,8 @@ Overall result: `XYVA_CLI_TECHNICALLY_COMPLETE_EXTERNAL_GATES_PENDING`
 Platform Packages draft PR #23:
 
 - branch `codex/provider-cli-bridge-v1`
-- head `c0f0e32`
-- public verification run `41797937754`: Node 22 and Node 24 PASS
+- head `ee6ed5c`
+- public verification run `41798256994`: Node 22 and Node 24 PASS
 
 QA Studio draft PR #137:
 
