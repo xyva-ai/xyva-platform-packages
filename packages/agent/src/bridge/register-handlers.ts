@@ -68,7 +68,7 @@ interface AiSocketState {
   requests: Map<string, AbortController>
 }
 
-interface CliSocketState { requests: Map<string, { controller: AbortController; providerId: CliProviderIdV1 }> }
+interface CliSocketState { scopeId: string; requests: Map<string, { controller: AbortController; providerId: CliProviderIdV1; internalRequestId: string }> }
 
 const FLOW_PROVIDER_PREVIEW_MAX_OUTPUT_TOKENS = 32
 
@@ -146,6 +146,7 @@ export function registerAllHandlers(_options: HandlerRegistrationOptions = {}): 
   const swarmService = new AgentSwarmService()
   const aiStateBySocket = new WeakMap<WebSocket, AiSocketState>()
   const cliStateBySocket = new WeakMap<WebSocket, CliSocketState>()
+  let nextCliSocketScope = 0
   let nextAiSocketScope = 0
   const getAiSocketState = (ws: WebSocket): AiSocketState => {
     const existing = aiStateBySocket.get(ws)
@@ -161,7 +162,7 @@ export function registerAllHandlers(_options: HandlerRegistrationOptions = {}): 
   const getCliSocketState = (ws: WebSocket): CliSocketState => {
     const existing = cliStateBySocket.get(ws)
     if (existing) return existing
-    const created: CliSocketState = { requests: new Map<string, { controller: AbortController; providerId: CliProviderIdV1 }>() }
+    const created: CliSocketState = { scopeId: `cli-socket-${++nextCliSocketScope}`, requests: new Map<string, { controller: AbortController; providerId: CliProviderIdV1; internalRequestId: string }>() }
     cliStateBySocket.set(ws, created)
     return created
   }
@@ -232,12 +233,13 @@ export function registerAllHandlers(_options: HandlerRegistrationOptions = {}): 
     if (!adapter) return cliFailure(request.requestId, 'unsupported_provider', false)
     const state = getCliSocketState(ws)
     if (state.requests.has(request.requestId)) return cliFailure(request.requestId, 'conflict', false)
+    const internalRequestId = `${state.scopeId}:${request.requestId}`
     const controller = new AbortController()
-    state.requests.set(request.requestId, { controller, providerId: request.providerId })
+    state.requests.set(request.requestId, { controller, providerId: request.providerId, internalRequestId })
     const abortOnClose = () => controller.abort()
     ws.once('close', abortOnClose)
     try {
-      const result = await adapter.infer({ requestId: request.requestId, prompt: request.prompt, signal: controller.signal })
+      const result = await adapter.infer({ requestId: internalRequestId, prompt: request.prompt, signal: controller.signal })
       if (controller.signal.aborted) return validateProviderCliInferenceOutcomeV1({ schemaVersion: 1, status: 'cancelled', requestId: request.requestId })
       return validateProviderCliInferenceOutcomeV1({ schemaVersion: 1, status: 'completed', requestId: request.requestId, providerId: request.providerId, outputText: result.outputText, inputTokens: result.inputTokens, outputTokens: result.outputTokens })
     } catch (error) {
@@ -255,7 +257,7 @@ export function registerAllHandlers(_options: HandlerRegistrationOptions = {}): 
     const active = getCliSocketState(ws).requests.get(request.requestId)
     if (!active || active.controller.signal.aborted) return validateProviderCliCancellationOutcomeV1({ schemaVersion: 1, status: 'failed', requestId: request.requestId, code: 'conflict', retryable: false })
     active.controller.abort()
-    ;(cliRegistry.get(active.providerId) as CliProviderAdapter | undefined)?.cancel(request.requestId)
+    ;(cliRegistry.get(active.providerId) as CliProviderAdapter | undefined)?.cancel(active.internalRequestId)
     return validateProviderCliCancellationOutcomeV1({ schemaVersion: 1, status: 'completed', requestId: request.requestId, cancellationRequested: true })
   })
   registerHandler('aiProviderSave', (payload) => {

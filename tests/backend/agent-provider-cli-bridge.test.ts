@@ -122,7 +122,7 @@ describe('provider CLI bridge v1', () => {
     await call(socket, 'infer', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-1', providerId: 'codex', mode: 'read_only', prompt: 'synthetic prompt' }])
     expect(response(socket, 'capabilities')).toMatchObject({ ok: true, data: { status: 'completed', capabilities: expect.arrayContaining([expect.objectContaining({ providerId: 'codex', enabled: true, modes: ['read_only'] }), expect.objectContaining({ providerId: 'claude', enabled: false, modes: [] }), expect.objectContaining({ providerId: 'gemini', enabled: false, modes: [] })]) } })
     expect(response(socket, 'infer')).toMatchObject({ ok: true, data: { status: 'completed', outputText: 'synthetic answer' } })
-    expect(infer).toHaveBeenCalledWith(expect.objectContaining({ requestId: 'infer-1', prompt: 'synthetic prompt', signal: expect.any(AbortSignal) }))
+    expect(infer).toHaveBeenCalledWith(expect.objectContaining({ requestId: expect.stringMatching(/^cli-socket-\d+:infer-1$/u), prompt: 'synthetic prompt', signal: expect.any(AbortSignal) }))
     await call(socket, 'unsafe', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'infer-2', providerId: 'codex', mode: 'read_only', prompt: 'x', env: { SECRET: 'x' } }])
     expect(response(socket, 'unsafe')).toMatchObject({ ok: true, data: { status: 'failed', code: 'invalid_request' } })
   })
@@ -180,10 +180,34 @@ describe('provider CLI bridge v1', () => {
     expect(response(other, 'cross-cancel')).toMatchObject({ ok: true, data: { status: 'failed', code: 'conflict' } })
     await call(owner, 'cancel', 'providerCliCancelV1', [{ schemaVersion: 1, requestId: 'shared' }])
     await pending
-    expect(cancel).toHaveBeenCalledWith('shared')
+    expect(cancel).toHaveBeenCalledWith(expect.stringMatching(/^cli-socket-\d+:shared$/u))
     expect(response(owner, 'infer')).toMatchObject({ ok: true, data: { status: 'cancelled' } })
     await call(owner, 'after', 'providerCliCancelV1', [{ schemaVersion: 1, requestId: 'shared' }])
     expect(response(owner, 'after')).toMatchObject({ ok: true, data: { status: 'failed', code: 'conflict' } })
+  })
+
+  it('namespaces identical request IDs across QA sockets before reaching the shared process manager', async () => {
+    grantCli()
+    const signals: AbortSignal[] = []
+    const infer = vi.fn((request: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => {
+      if (!request.signal) return reject(new Error('missing signal'))
+      signals.push(request.signal)
+      request.signal.addEventListener('abort', () => reject(new DOMException('cancelled', 'AbortError')), { once: true })
+    }))
+    const cancel = vi.fn(() => true)
+    registerAllHandlers({ cliRegistry: fakeRegistry({ infer, cancel }) })
+    const owner = new FakeWebSocket(); const other = new FakeWebSocket()
+    authorizeQa(owner); authorizeQa(other)
+    const ownerPending = call(owner, 'owner-infer', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'same', providerId: 'codex', mode: 'read_only', prompt: 'owner' }])
+    await vi.waitFor(() => expect(infer).toHaveBeenCalledOnce())
+    const otherPending = call(other, 'other-infer', 'providerCliInferV1', [{ schemaVersion: 1, requestId: 'same', providerId: 'codex', mode: 'read_only', prompt: 'other' }])
+    await vi.waitFor(() => expect(infer).toHaveBeenCalledTimes(2))
+    await call(other, 'other-cancel', 'providerCliCancelV1', [{ schemaVersion: 1, requestId: 'same' }])
+    expect(response(other, 'other-cancel')).toMatchObject({ ok: true, data: { status: 'completed' } })
+    expect(signals[0]?.aborted).toBe(false)
+    await call(owner, 'owner-cancel', 'providerCliCancelV1', [{ schemaVersion: 1, requestId: 'same' }])
+    await Promise.all([ownerPending, otherPending])
+    expect(cancel).toHaveBeenCalledTimes(2)
   })
 
   it('maps adapter errors to stable secret-free failure codes', async () => {
