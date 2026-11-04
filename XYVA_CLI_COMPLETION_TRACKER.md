@@ -31,3 +31,16 @@ Status values are evidence-based as of the current isolated CLI worktree.
 - Managed lifecycle updates require a separately approved immutable-source,
   integrity, consent and rollback design; the implemented command is guidance
   only and intentionally mutates nothing.
+
+## Executed evidence
+
+- macOS local discovery (2026-11-04): Codex `0.162.1` was found through the
+  trusted resolver and reported authenticated; Gemini `0.64.0` was found with
+  authentication intentionally `not_checked`; Claude Code was not installed.
+  The commands were `provider cli status --json`, `provider cli doctor`, and
+  reporting-only `provider cli update`. No login, inference, installation, or
+  update was performed.
+- Platform Packages draft PR #23 at `cb72edc5859e94c6b246b565000f6ffb608a2987`:
+  GitHub-hosted Node 22 and Node 24 public-verification run `41790908572`
+  completed successfully. This is package compatibility evidence, not Windows
+  11 device acceptance or real-provider evidence.
