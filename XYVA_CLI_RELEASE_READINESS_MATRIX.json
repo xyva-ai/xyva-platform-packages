@@ -5,9 +5,9 @@
   "repositories": {
     "platformPackages": {
       "branch": "codex/provider-cli-bridge-v1",
-      "head": "aa7bd71",
+      "head": "919c067",
       "pullRequest": 23,
-      "ci": [{"runId": 41798463100, "result": "PASS", "scope": "public Node 22/24 verification before evidence refresh"}]
+      "ci": [{"runId": 41799057447, "result": "PASS", "scope": "public Node 22/24 verification"}]
     },
     "qaStudio": {
       "branch": "codex/qa-studio-cli-bridge-integration",
