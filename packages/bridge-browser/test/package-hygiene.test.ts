@@ -21,12 +21,16 @@ describe('published browser package hygiene', () => {
   })
 
   it('includes the Apache license, notice, readme and built entry in the tarball', () => {
-    // Windows exposes npm through npm.cmd; keep the same packaging assertion
-    // while resolving the platform-native executable explicitly.
-    const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm'
-    const result = execFileSync(npmExecutable, ['pack', '--dry-run', '--json'], {
+    // Prefer npm's own node entrypoint. Directly spawning npm.cmd from Node can
+    // return EINVAL on hosted Windows runners; the fallback is a fixed command
+    // with no user-controlled shell input.
+    const npmExecPath = process.env.npm_execpath
+    const npmExecutable = npmExecPath ? process.execPath : (process.platform === 'win32' ? 'npm.cmd' : 'npm')
+    const npmArgs = npmExecPath ? [npmExecPath, 'pack', '--dry-run', '--json'] : ['pack', '--dry-run', '--json']
+    const result = execFileSync(npmExecutable, npmArgs, {
       cwd: packageRoot,
       encoding: 'utf8',
+      ...(process.platform === 'win32' && !npmExecPath ? { shell: true } : {}),
     })
     const [pack] = JSON.parse(result) as Array<{ files: Array<{ path: string }> }>
     const files = pack.files.map((file) => file.path)
