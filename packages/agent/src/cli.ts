@@ -161,7 +161,10 @@ providerCliCommand
         `installed=${status.installed ? 'yes' : 'no'}`,
         `version=${status.version.installedVersion || 'missing'}`,
         `supported=${status.version.supported ? 'yes' : 'no'}`,
+        `latest=${status.version.latestSupportedVersion || 'unknown'}`,
         `auth=${status.authentication}`,
+        `integrity=${status.version.integrityStatus}`,
+        `rollback=${status.version.rollbackAvailable ? 'yes' : 'no'}`,
         `ready=${status.readiness}`,
       ].join(' '))
     }
@@ -174,6 +177,7 @@ providerCliCommand
     const statuses = await new CliAdapterRegistry().status()
     for (const status of statuses) {
       console.log(`${status.displayName}: ${status.detail}`)
+      console.log(`  Integrity: ${status.version.integrityStatus}; rollback=${status.version.rollbackAvailable ? 'available' : 'not-available'}; latest=${status.version.latestSupportedVersion || 'unknown'}`)
       if (!status.installed) console.log(`  Install: ${status.installCommand}`)
       else if (!status.version.supported && status.version.updateCommand) console.log(`  Update guidance: ${status.version.updateCommand}`)
       else if (status.authentication === 'not_authenticated' && status.loginCommand) console.log(`  Login: ${status.loginCommand}`)

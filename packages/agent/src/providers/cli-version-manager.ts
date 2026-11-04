@@ -42,10 +42,15 @@ export class CliVersionManager {
     const supported = Boolean(parsedInstalled) && (!parsedMinimum || atLeast(parsedInstalled!, parsedMinimum))
     return {
       installedVersion,
+      // The compatibility matrix is a minimum-version policy, not a remote
+      // latest-version feed. Keep this unknown until a signed manifest is loaded.
+      latestSupportedVersion: null,
       supported,
       minimumVersion: entry.minimumVersion,
       updateStatus: !installedVersion ? 'not_checked' : supported ? 'unknown' : 'unsupported',
       updateCommand: entry.updateCommand,
+      integrityStatus: 'not_checked',
+      rollbackAvailable: false,
     }
   }
 }

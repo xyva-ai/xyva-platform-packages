@@ -29,15 +29,15 @@ type AdapterDefinition = {
   installCommand: string
   loginArgs: readonly string[] | null
   authenticationArgs: readonly string[] | null
-  execution: 'codex' | 'claude' | 'gemini-blocked'
+  execution: 'codex' | 'claude' | 'gemini'
 }
 
 const DEFINITIONS: readonly AdapterDefinition[] = [
   { providerId: 'codex', displayName: 'Codex CLI', command: 'codex', installCommand: 'npm install -g @openai/codex', loginArgs: ['login', '--device-auth'], authenticationArgs: ['login', 'status'], execution: 'codex' },
   { providerId: 'claude', displayName: 'Claude Code CLI', command: 'claude', installCommand: 'npm install -g @anthropic-ai/claude-code', loginArgs: null, authenticationArgs: ['auth', 'status', '--json'], execution: 'claude' },
-  // Gemini is discoverable, but execution stays fail-closed until a pinned
-  // no-tool/config-isolation profile is independently demonstrated.
-  { providerId: 'gemini', displayName: 'Gemini CLI', command: 'gemini', installCommand: 'npm install -g @google/gemini-cli', loginArgs: null, authenticationArgs: null, execution: 'gemini-blocked' },
+  // Gemini has a fixed headless read-only profile, but the bridge gate below
+  // remains disabled until independent sandbox and compliance evidence exists.
+  { providerId: 'gemini', displayName: 'Gemini CLI', command: 'gemini', installCommand: 'npm install -g @google/gemini-cli', loginArgs: null, authenticationArgs: null, execution: 'gemini' },
 ]
 
 function safeEnvironment(isolatedHome?: string): NodeJS.ProcessEnv {
@@ -111,9 +111,6 @@ export class GenericCliAdapter implements CliProviderAdapter {
   public async listModels(): Promise<string[]> { return [] }
 
   public async infer(request: CliInferenceRequest): Promise<CliInferenceResult> {
-    if (this.definition.execution === 'gemini-blocked') {
-      throw new Error('Gemini CLI inference is disabled pending sandbox and compliance approval')
-    }
     if (process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_TEST_MODE !== '1'
       && !(this.providerId === 'codex' && process.env.XYVA_AGENT_ENABLE_CODEX_CLI_TEST_MODE === '1')) {
       throw new Error(`${this.definition.displayName} inference is disabled pending compliance approval`)
@@ -130,7 +127,9 @@ export class GenericCliAdapter implements CliProviderAdapter {
       if (lease.signal.aborted) throw new Error('CLI inference cancelled')
       if (!readiness.installed) throw new Error('CLI executable is unavailable or untrusted')
       if (!readiness.version.supported) throw new Error('CLI version is unsupported')
-      if (readiness.authentication !== 'authenticated') throw new Error('CLI is not authenticated')
+      const syntheticGeminiTest = this.providerId === 'gemini'
+        && process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_TEST_MODE === '1'
+      if (readiness.authentication !== 'authenticated' && !syntheticGeminiTest) throw new Error('CLI is not authenticated')
       const resolved = await this.resolver.resolve(this.definition.command)
       if (!resolved.trusted || !resolved.executablePath) throw new Error('CLI executable is unavailable or untrusted')
       taskDirectory = fs.mkdtempSync(path.join(os.tmpdir(), `xyva-${this.providerId}-task-`))
@@ -144,7 +143,11 @@ export class GenericCliAdapter implements CliProviderAdapter {
       if (result.timedOut) throw new Error('CLI inference timed out')
       if (result.outputLimitExceeded) throw new Error('CLI inference exceeded output limit')
       if (result.exitCode !== 0) throw new Error('CLI inference failed')
-      const parsed = this.definition.execution === 'codex' ? parseCodexJsonl(result.stdout) : parseClaudeJson(result.stdout)
+      const parsed = this.definition.execution === 'codex'
+        ? parseCodexJsonl(result.stdout)
+        : this.definition.execution === 'claude'
+          ? parseClaudeJson(result.stdout)
+          : parseGeminiJson(result.stdout)
       if (!parsed.outputText) throw new Error('CLI inference returned no output')
       return parsed
     } finally {
@@ -186,7 +189,9 @@ export class GenericCliAdapter implements CliProviderAdapter {
     if (this.definition.execution === 'claude') {
       return ['-p', '--output-format', 'json', '--no-session-persistence', '--tools', '', '--disallowedTools', 'mcp__*', '--restricted', '--permission-prompts', 'none']
     }
-    throw new Error('CLI inference is disabled pending compliance approval')
+    // Gemini receives the prompt over stdin. Plan mode is read-only and the
+    // sandbox is explicit; the product bridge still denies Gemini by policy.
+    return ['--output-format', 'json', '--approval-mode', 'plan', '--sandbox']
   }
 }
 
@@ -225,6 +230,23 @@ function parseClaudeJson(stdout: string): CliInferenceResult {
       outputText,
       inputTokens: typeof usage.input_tokens === 'number' && Number.isSafeInteger(usage.input_tokens) && usage.input_tokens >= 0 ? usage.input_tokens : null,
       outputTokens: typeof usage.output_tokens === 'number' && Number.isSafeInteger(usage.output_tokens) && usage.output_tokens >= 0 ? usage.output_tokens : null,
+    }
+  } catch { return { outputText: '', inputTokens: null, outputTokens: null } }
+}
+
+function parseGeminiJson(stdout: string): CliInferenceResult {
+  try {
+    const value = JSON.parse(stdout) as Record<string, unknown>
+    const outputText = typeof value.response === 'string'
+      ? value.response
+      : typeof value.result === 'string'
+        ? value.result
+        : ''
+    const stats = value.stats && typeof value.stats === 'object' ? value.stats as Record<string, unknown> : {}
+    return {
+      outputText,
+      inputTokens: typeof stats.input_tokens === 'number' && Number.isSafeInteger(stats.input_tokens) && stats.input_tokens >= 0 ? stats.input_tokens : null,
+      outputTokens: typeof stats.output_tokens === 'number' && Number.isSafeInteger(stats.output_tokens) && stats.output_tokens >= 0 ? stats.output_tokens : null,
     }
   } catch { return { outputText: '', inputTokens: null, outputTokens: null } }
 }

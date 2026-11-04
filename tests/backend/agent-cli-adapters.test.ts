@@ -36,7 +36,7 @@ function adapters(runner: CliProcessRunner, processes = new CliProcessManager())
 
 function readyDiscoveryResult(input: Parameters<CliProcessRunner['run']>[0]) {
   if (input.args.length === 1 && input.args[0] === '--version') {
-    return { exitCode: 0, stdout: input.command === 'claude' ? 'claude 2.1.259' : 'codex-cli 0.162.1', stderr: '', timedOut: false, cancelled: false }
+    return { exitCode: 0, stdout: input.command === 'claude' ? 'claude 2.1.259' : input.command === 'gemini' ? 'gemini 0.64.0' : 'codex-cli 0.162.1', stderr: '', timedOut: false, cancelled: false }
   }
   if (input.args.join(' ') === 'login status' || input.args.join(' ') === 'auth status --json') {
     return { exitCode: 0, stdout: 'logged in', stderr: '', timedOut: false, cancelled: false }
@@ -181,12 +181,20 @@ describe('provider-specific official CLI execution profiles', () => {
     expect(observed!.env).not.toHaveProperty('ANTHROPIC_API_KEY')
   })
 
-  it('keeps Gemini task execution fail-closed even when the generic local test gate is set', async () => {
+  it('uses Gemini headless plan mode only in synthetic test mode while the product bridge remains default-deny', async () => {
     process.env.XYVA_AGENT_ENABLE_PROVIDER_CLI_TEST_MODE = '1'
-    let called = false
-    const adapter = adapters(fakeRunner(async () => { called = true; return { exitCode: 0, stdout: '', stderr: '', timedOut: false, cancelled: false } })).get('gemini')!
-    await expect(adapter.infer({ requestId: 'gemini-denied', prompt: 'synthetic' })).rejects.toThrow('disabled pending sandbox and compliance approval')
-    expect(called).toBe(false)
+    let observed: Parameters<CliProcessRunner['run']>[0] | undefined
+    const adapter = adapters(fakeRunner(async (input) => {
+      const discovery = readyDiscoveryResult(input)
+      if (discovery) return discovery
+      observed = input
+      return { exitCode: 0, stdout: JSON.stringify({ response: 'Gemini OK', stats: { input_tokens: 2, output_tokens: 1 } }), stderr: '', timedOut: false, cancelled: false }
+    })).get('gemini')!
+    await expect(adapter.infer({ requestId: 'gemini-safe-request', prompt: 'synthetic prompt' })).resolves.toEqual({ outputText: 'Gemini OK', inputTokens: 2, outputTokens: 1 })
+    expect(observed?.args).toEqual(['--output-format', 'json', '--approval-mode', 'plan', '--sandbox'])
+    expect(observed?.stdin).toBe('synthetic prompt')
+    expect(observed?.env.HOME).toBe(observed?.cwd)
+    expect(observed?.env).not.toHaveProperty('GOOGLE_API_KEY')
   })
 
   it('reports a documented Claude login-status failure as login_required without reflecting diagnostics', async () => {

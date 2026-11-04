@@ -3,13 +3,17 @@ export type CliProviderId = (typeof CLI_PROVIDER_IDS)[number]
 
 export type CliAuthenticationStatus = 'not_checked' | 'authenticated' | 'not_authenticated' | 'unavailable'
 export type CliUpdateStatus = 'not_checked' | 'current' | 'update_available' | 'unsupported' | 'unknown'
+export type CliIntegrityStatus = 'not_checked' | 'verified' | 'failed' | 'unavailable'
 
 export interface CliVersionStatus {
   installedVersion: string | null
+  latestSupportedVersion: string | null
   supported: boolean
   minimumVersion: string | null
   updateStatus: CliUpdateStatus
   updateCommand: string | null
+  integrityStatus: CliIntegrityStatus
+  rollbackAvailable: boolean
 }
 
 export interface CliDiscoveryStatus {
