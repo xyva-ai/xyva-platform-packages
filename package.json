@@ -12,7 +12,7 @@
     "packages/platform"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.23.4"
   },
   "scripts": {
     "build:public": "npm run build --workspace @xyva/contracts && npm run build --workspace @xyva/bridge-types && npm run build --workspace @xyva/bridge-browser && npm run build --workspace @xyva/agent && npm run build --workspace @xyva/platform",
@@ -21,10 +21,11 @@
     "verify:public": "npm run build:public && npm run typecheck:public && npm run test:public"
   },
   "overrides": {
-    "body-parser": "2.3.0"
+    "body-parser": "2.4.0",
+    "qs": "6.17.1"
   },
   "devDependencies": {
-    "@types/node": "20.19.28",
-    "typescript": "5.9.3"
+    "@types/node": "26.6.6",
+    "typescript": "6.0.3"
   }
 }

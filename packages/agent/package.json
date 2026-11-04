@@ -31,30 +31,31 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.23.4"
   },
   "dependencies": {
-    "@axe-core/playwright": "4.11.3",
+    "@axe-core/playwright": "4.14.0",
     "@xyva/bridge-types": "0.1.1",
     "@xyva/contracts": "0.1.0",
-    "body-parser": "2.3.0",
-    "chalk": "5.6.2",
-    "commander": "14.0.3",
+    "body-parser": "2.4.0",
+    "chalk": "6.0.1",
+    "commander": "15.0.0",
     "cors": "2.8.6",
-    "express": "5.2.1",
-    "open": "10.2.0",
-    "playwright": "1.62.0",
-    "ws": "8.21.0"
+    "express": "5.3.0",
+    "open": "11.0.4",
+    "playwright": "1.64.1",
+    "ws": "8.22.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
-    "@types/ws": "^8.18.1",
-    "tsup": "^8.5.0",
-    "tsx": "^4.20.6"
+    "@types/ws": "8.18.2",
+    "tsup": "9.0.0",
+    "tsx": "4.23.15",
+    "node-gyp": "13.1.0"
   },
   "scripts": {
-    "build": "npm run build --workspace @xyva/contracts && npm run build --workspace @xyva/bridge-types && tsup src/index.ts src/cli.ts --format esm --dts --outDir dist --clean --external playwright --external playwright-core --external chromium-bidi --external @axe-core/playwright --external axe-core --external @xyva/contracts",
+    "build": "npm run build --workspace @xyva/contracts && npm run build --workspace @xyva/bridge-types && tsup src/index.ts src/cli.ts --format esm --dts --outDir dist --clean --external playwright --external playwright-core --external chromium-bidi --external @axe-core/playwright --external axe-core --external @xyva/contracts && node scripts/build-windows-secure-store.mjs",
     "dev": "npm run build --workspace @xyva/bridge-types && tsx src/cli.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "prepublishOnly": "npm run build"

@@ -1,0 +1,266 @@
+name: Nightly dependency and Node canary
+
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/win11-secure-store-prebuilt-evidence
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xyva-nightly-dependency-canary
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    name: linux-node-${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.23.4', '24.22.2', '26.13.0']
+    steps:
+      - name: Checkout exact scheduled revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Record runtime versions
+        id: runtime
+        shell: bash
+        run: |
+          echo "node=$(node --version)" >> "$GITHUB_OUTPUT"
+          echo "npm=$(npm --version)" >> "$GITHUB_OUTPUT"
+      - name: Verify runtime and install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run build, typecheck and public regression
+        shell: bash
+        env:
+          XYVA_EVIDENCE_DIR: evidence
+        run: |
+          set -uo pipefail
+          mkdir -p evidence
+          npm run build:public; rc=$?; node scripts/ci/record-test-result.mjs build "$([ $rc -eq 0 ] && echo PASS || echo FAIL)"; test $rc -eq 0
+          npm run typecheck:public; rc=$?; node scripts/ci/record-test-result.mjs typecheck "$([ $rc -eq 0 ] && echo PASS || echo FAIL)"; test $rc -eq 0
+          npm run test:public; rc=$?; node scripts/ci/record-test-result.mjs publicRegression "$([ $rc -eq 0 ] && echo PASS || echo FAIL)"; test $rc -eq 0
+          npx vitest run tests/backend/agent-security-hardening.test.ts tests/backend/agent-windows-secure-store.test.ts -c vitest.public.config.ts; rc=$?; node scripts/ci/record-test-result.mjs security "$([ $rc -eq 0 ] && echo PASS || echo FAIL)"; test $rc -eq 0
+      - name: Run audit and package dry-run
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit --audit-level=high
+          npm pack --workspace @xyva/agent --dry-run
+      - name: Write secret-free evidence
+        if: always()
+        shell: bash
+        env:
+          XYVA_EVIDENCE_DIR: evidence
+          XYVA_NODE_VERSION: ${{ matrix.node }}
+          XYVA_NPM_VERSION: ${{ steps.runtime.outputs.npm }}
+          XYVA_JOB_STATUS: ${{ job.status }}
+        run: |
+          mkdir -p evidence
+          node scripts/ci/write-staging-evidence.mjs
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nightly-linux-node-${{ matrix.node }}-${{ github.run_id }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: windows-node-${{ matrix.node }}
+    runs-on: windows-2025
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.23.4', '24.22.2', '26.13.0']
+    steps:
+      - name: Checkout exact scheduled revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Record runtime versions
+        id: runtime
+        shell: pwsh
+        run: |
+          "node=$(node --version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "npm=$(npm --version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Install locked dependencies
+        shell: pwsh
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
+      - name: Build native agent and run verification
+        shell: pwsh
+        env:
+          XYVA_EVIDENCE_DIR: evidence
+        run: |
+          New-Item -ItemType Directory -Path evidence -Force | Out-Null
+          npm run build --workspace @xyva/agent
+          $rc = $LASTEXITCODE
+          node scripts/ci/record-test-result.mjs build $(if ($rc -eq 0) { 'PASS' } else { 'FAIL' })
+          if ($rc -ne 0) { throw "agent build failed with exit code $rc" }
+          npm run typecheck:public
+          $rc = $LASTEXITCODE
+          node scripts/ci/record-test-result.mjs typecheck $(if ($rc -eq 0) { 'PASS' } else { 'FAIL' })
+          if ($rc -ne 0) { throw "public typecheck failed with exit code $rc" }
+          npx vitest run tests/backend/agent-security-hardening.test.ts tests/backend/agent-windows-secure-store.test.ts -c vitest.public.config.ts
+          $rc = $LASTEXITCODE
+          node scripts/ci/record-test-result.mjs security $(if ($rc -eq 0) { 'PASS' } else { 'FAIL' })
+          if ($rc -ne 0) { throw "security suite failed with exit code $rc" }
+          npm run verify:public
+          $rc = $LASTEXITCODE
+          node scripts/ci/record-test-result.mjs publicRegression $(if ($rc -eq 0) { 'PASS' } else { 'FAIL' })
+          if ($rc -ne 0) { throw "public verification failed with exit code $rc" }
+          npm audit --audit-level=high
+          if ($LASTEXITCODE -ne 0) { throw "npm audit failed with exit code $LASTEXITCODE" }
+          npm pack --workspace @xyva/agent --dry-run
+          if ($LASTEXITCODE -ne 0) { throw "npm pack dry-run failed with exit code $LASTEXITCODE" }
+          node packages/agent/native/windows-secure-store/test/parent-swap.test.cjs
+          $rc = $LASTEXITCODE
+          node scripts/ci/record-test-result.mjs nativeWindows $(if ($rc -eq 0) { 'PASS' } else { 'FAIL' })
+          if ($rc -ne 0) { throw "native Windows parent-swap tests failed with exit code $rc" }
+      - name: Stage Node 26 Windows binary for VM-100 transport
+        if: ${{ matrix.node == '26.13.0' }}
+        shell: pwsh
+        run: |
+          $binary = Resolve-Path 'packages/agent/dist/native/win32-x64/xyva_windows_secure_store.node'
+          $target = Join-Path $pwd 'evidence/native-binary'
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          Copy-Item -LiteralPath $binary.Path -Destination (Join-Path $target 'xyva_windows_secure_store.node') -Force
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $target 'xyva_windows_secure_store.node')).Hash.ToLowerInvariant()
+          npm pack --workspace @xyva/agent --pack-destination $target --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw "Windows agent package failed with exit code $LASTEXITCODE" }
+          $package = Get-ChildItem -LiteralPath $target -Filter 'xyva-agent-*.tgz' | Select-Object -First 1
+          if (-not $package) { throw 'Windows agent package missing' }
+          tar -tf $package.FullName | Select-String 'package/dist/native/win32-x64/xyva_windows_secure_store.node' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Windows agent package does not contain native binary' }
+          $packageHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $package.FullName).Hash.ToLowerInvariant()
+          $manifest = [ordered]@{
+            schemaVersion = 1
+            commitSha = (git rev-parse HEAD).Trim()
+            node = (node --version).Trim()
+            platform = 'win32-x64'
+            artifact = 'xyva_windows_secure_store.node'
+            sha256 = $hash
+            package = $package.Name
+            packageSha256 = $packageHash
+            promotion = 'STAGING_ONLY'
+          }
+          $manifest | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $target 'native-binary-manifest.json')
+      - name: Write secret-free evidence
+        if: always()
+        shell: pwsh
+        env:
+          XYVA_EVIDENCE_DIR: evidence
+          XYVA_NODE_VERSION: ${{ matrix.node }}
+          XYVA_NPM_VERSION: ${{ steps.runtime.outputs.npm }}
+          XYVA_JOB_STATUS: ${{ job.status }}
+        run: |
+          New-Item -ItemType Directory -Path evidence -Force | Out-Null
+          node scripts/ci/write-staging-evidence.mjs
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nightly-windows-node-${{ matrix.node }}-${{ github.run_id }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Node 26 VM-100 transport bundle
+        if: ${{ always() && matrix.node == '26.13.0' && hashFiles('evidence/native-binary/xyva_windows_secure_store.node') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-node26-native-transport-${{ github.run_id }}
+          path: evidence/native-binary
+          if-no-files-found: error
+          retention-days: 14
+
+  staging-candidate:
+    name: build staging candidate manifest
+    if: ${{ always() && needs.linux.result == 'success' && needs.windows.result == 'success' }}
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact scheduled revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Download matrix evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: nightly-*-node-*-*
+          path: evidence-bundles
+          merge-multiple: false
+      - name: Validate evidence and create staging-only candidate
+        shell: bash
+        env:
+          XYVA_EVIDENCE_ROOT: evidence-bundles
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import crypto from 'node:crypto'
+          import fs from 'node:fs'
+          import path from 'node:path'
+          const root = process.env.XYVA_EVIDENCE_ROOT
+          const manifests = []
+          const walk = (dir) => {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const file = path.join(dir, entry.name)
+              if (entry.isDirectory()) walk(file)
+              else if (entry.name === 'staging-evidence.json') manifests.push(file)
+            }
+          }
+          walk(root)
+          if (manifests.length !== 6) throw new Error(`expected 6 evidence manifests, found ${manifests.length}`)
+          const records = manifests.map((file) => JSON.parse(fs.readFileSync(file, 'utf8')))
+          const sha = records[0].commitSha
+          if (!/^[0-9a-f]{40}$/.test(sha) || records.some((record) => record.commitSha !== sha)) throw new Error('evidence commit SHA mismatch')
+          for (const record of records) {
+            for (const [name, status] of Object.entries(record.tests)) {
+              if (name === 'nativeWindows' && record.platform !== 'Windows' && status === 'NOT_EXECUTED') continue
+              if (status !== 'PASS') throw new Error(`${record.platform}/${record.node} ${name} is ${status}`)
+            }
+          }
+          const candidate = {
+            schemaVersion: 1,
+            commitSha: sha,
+            runId: process.env.GITHUB_RUN_ID,
+            evidence: records.map((record) => ({ platform: record.platform, node: record.node, jobStatus: record.jobStatus })),
+            artifacts: records.flatMap((record) => record.artifacts),
+            promotion: 'STAGING_ONLY',
+            signature: { status: 'NOT_CONFIGURED', requiredForProduction: true },
+          }
+          fs.mkdirSync('staging-candidate', { recursive: true })
+          fs.writeFileSync('staging-candidate/staging-candidate.json', `${JSON.stringify(candidate, null, 2)}\n`)
+          fs.writeFileSync('staging-candidate/staging-candidate.sha256', `${crypto.createHash('sha256').update(JSON.stringify(candidate)).digest('hex')}  staging-candidate.json\n`)
+          NODE
+      - name: Upload staging-only candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: nightly-staging-candidate-${{ github.run_id }}
+          path: staging-candidate
+          if-no-files-found: error
+          retention-days: 14

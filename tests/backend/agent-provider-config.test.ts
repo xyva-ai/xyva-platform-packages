@@ -21,8 +21,9 @@ const stateDirectories: string[] = []
 const previousStateDirectory = process.env.XYVA_AGENT_STATE_DIR
 
 function useIsolatedState(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-config-'))
-  stateDirectories.push(directory)
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-config-'))
+  stateDirectories.push(parent)
+  const directory = path.join(parent, 'state')
   process.env.XYVA_AGENT_STATE_DIR = directory
   return directory
 }
@@ -113,6 +114,9 @@ describe('agent provider configuration', () => {
   it('refuses every provider mutation without changing malformed stored configuration', () => {
     const directory = useIsolatedState()
     const configPath = path.join(directory, 'config.json')
+    // Materialize the Windows private root before replacing only the synthetic
+    // configuration payload with malformed data for this regression case.
+    saveProviderConfiguration({ providerId: 'ollama', defaultModel: 'seed-model' })
     const malformed = JSON.stringify({
       aiProvider: 'openai',
       aiApiKeys: {},
@@ -130,6 +134,8 @@ describe('agent provider configuration', () => {
     expect(() => setFlowProviderGrant('openai', false)).toThrow(/refusing to overwrite/i)
     expect(() => deleteProviderConfiguration('openai')).toThrow(/refusing to overwrite/i)
     expect(fs.readFileSync(configPath, 'utf8')).toBe(malformed)
-    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(configPath).mode & 0o777).toBe(0o600)
+    }
   })
 })

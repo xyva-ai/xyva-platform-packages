@@ -192,8 +192,9 @@ describe('masked provider secret reader', () => {
 
 describe('provider CLI process boundary', () => {
   it('configures local models, reports only safe status and rejects secret-bearing argv', async () => {
-    const stateDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-cli-'))
-    temporaryDirectories.push(stateDirectory)
+    const parentDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-provider-cli-'))
+    temporaryDirectories.push(parentDirectory)
+    const stateDirectory = path.join(parentDirectory, 'state')
     const env = { XYVA_AGENT_STATE_DIR: stateDirectory }
 
     const configured = await runAgent(['provider', 'configure', 'ollama', '--model', 'gemma3:4b'], env)

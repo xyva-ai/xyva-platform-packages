@@ -1,5 +1,4 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -12,7 +11,7 @@ import type {
 import { PROVIDER_IDS_V1, type ProviderIdV1 } from '@xyva/contracts'
 
 import { getXyvaDir } from './auth.js'
-import { isSealedSecret, sealSecret, unsealSecret, writePrivateFile } from './secure-store.js'
+import { isSealedSecret, readPrivateFile, sealSecret, SecureStoreError, unsealSecret, writePrivateFile } from './secure-store.js'
 
 export interface AgentConfig {
   aiProvider: ProviderIdV1 | null
@@ -134,7 +133,12 @@ function decryptLegacyValue(value: string) {
 
 function decryptValue(value: string, field: string) {
   if (!isSealedSecret(value)) {
-    return value.startsWith('aes:') ? decryptLegacyValue(value) : value
+    if (!value.startsWith('aes:')) return value
+    const decrypted = decryptLegacyValue(value)
+    if (decrypted === null) {
+      throw new SecureStoreError('XYVA_SECRET_UNSEAL_FAILED', `Legacy configuration secret ${field} cannot be decrypted.`)
+    }
+    return decrypted
   }
 
   return unsealSecret(value, configSecretContext(field))
@@ -182,13 +186,14 @@ function fromStoredConfig(config: Partial<StoredAgentConfig> | null | undefined)
 }
 
 export function loadConfig(): AgentConfig {
-  try {
-    const configPath = getConfigPath()
-    if (!fs.existsSync(configPath)) {
-      return defaultAgentConfig()
-    }
+  const configPath = getConfigPath()
+  const raw = readPrivateFile(configPath)
+  if (raw === null) {
+    return defaultAgentConfig()
+  }
 
-    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Partial<StoredAgentConfig>
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredAgentConfig>
     const config = fromStoredConfig(parsed)
     const containsLegacySecrets = [
       ...Object.values(parsed.aiApiKeys || {}),
@@ -202,27 +207,23 @@ export function loadConfig(): AgentConfig {
 
     if (containsLegacySecrets || containsNonCanonicalProviderKeys) {
       writePrivateFile(configPath, JSON.stringify(toStoredConfig(config), null, 2))
-    } else {
-      try {
-        fs.chmodSync(configPath, 0o600)
-      } catch {
-        // Best-effort on platforms where POSIX modes are not available.
-      }
     }
 
     return config
-  } catch {
-    return defaultAgentConfig()
+  } catch (error) {
+    if (error instanceof SecureStoreError) throw error
+    throw new SecureStoreError('XYVA_SECRET_INVALID', 'Stored agent configuration is unreadable; refusing to replace it.')
   }
 }
 
 function loadConfigForMutation(): AgentConfig {
   const configPath = getConfigPath()
-  if (!fs.existsSync(configPath)) return defaultAgentConfig()
+  const raw = readPrivateFile(configPath)
+  if (raw === null) return defaultAgentConfig()
 
   let parsed: Partial<StoredAgentConfig>
   try {
-    const value: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    const value: unknown = JSON.parse(raw)
     if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
       throw new Error('invalid')
     }

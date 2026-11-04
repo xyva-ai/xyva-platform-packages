@@ -1,5 +1,6 @@
 // @vitest-environment node
 import crypto from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -7,8 +8,9 @@ import path from 'node:path'
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { loadCredentials, saveCredentials } from '../../packages/agent/src/auth'
-import { loadConfig, saveConfig } from '../../packages/agent/src/config'
+import { loadConfig, saveConfig, updateConfig } from '../../packages/agent/src/config'
 import { checkLicenseGuard, createMachineId, validateLicense } from '../../packages/agent/src/license'
+import { readPrivateFile, writePrivateFile } from '../../packages/agent/src/secure-store'
 import { AgentSwarmCredentialStore } from '../../packages/agent/src/services/swarm/credential-store'
 import { AgentFsService } from '../../packages/agent/src/services/fs-service'
 import { AgentGitService } from '../../packages/agent/src/services/git-service'
@@ -38,6 +40,29 @@ function fileMode(filePath: string) {
   return fs.statSync(filePath).mode & 0o777
 }
 
+function expectPrivateFile(filePath: string) {
+  expect(fs.existsSync(filePath)).toBe(true)
+  if (process.platform === 'win32') {
+    // The native read validates the owner-only protected DACL before returning
+    // any content; POSIX mode bits do not describe NTFS access control.
+    expect(readPrivateFile(filePath)).not.toBeNull()
+  } else {
+    expect(fileMode(filePath)).toBe(0o600)
+  }
+}
+
+function writePrivateFixture(filePath: string, content: string) {
+  writePrivateFile(filePath, content)
+  expectPrivateFile(filePath)
+}
+
+function createExternalFixture(prefix: string, fileName: string, content: string) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  const filePath = path.join(directory, fileName)
+  fs.writeFileSync(filePath, content)
+  return { directory, filePath }
+}
+
 function signLicense(machineId: string, overrides: Record<string, unknown> = {}) {
   const now = Math.floor(Date.now() / 1000)
   const header = Buffer.from(JSON.stringify({ alg: 'EdDSA', kid: 'xyva-test', typ: 'JWT' })).toString('base64url')
@@ -58,8 +83,7 @@ function signLicense(machineId: string, overrides: Record<string, unknown> = {})
 }
 
 function writeLicense(token: string, machineId: string, overrides: Record<string, unknown> = {}) {
-  fs.mkdirSync(xyvaPath(), { recursive: true })
-  fs.writeFileSync(xyvaPath('license.json'), JSON.stringify({
+  writePrivateFixture(xyvaPath('license.json'), JSON.stringify({
     version: 2,
     source: 'jwt',
     token,
@@ -102,7 +126,8 @@ afterAll(() => {
 
 describe('agent secret storage', () => {
   it('isolates disposable agent state without changing HOME and rejects broad overrides', () => {
-    const isolatedState = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-agent-state-'))
+    const isolatedParent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-agent-state-'))
+    const isolatedState = path.join(isolatedParent, 'private-state')
     process.env.XYVA_AGENT_STATE_DIR = isolatedState
 
     saveCredentials({
@@ -123,7 +148,7 @@ describe('agent secret storage', () => {
     expect(() => getAgentDataRoot()).toThrow(/must not target/i)
     process.env.XYVA_AGENT_STATE_DIR = temporaryHome
     expect(() => getAgentDataRoot()).toThrow(/must not target/i)
-    fs.rmSync(isolatedState, { recursive: true, force: true })
+    fs.rmSync(isolatedParent, { recursive: true, force: true })
   })
 
   it('seals config and portal credentials with private file permissions', () => {
@@ -151,9 +176,9 @@ describe('agent secret storage', () => {
     expect(rawCredentials).not.toContain('portal-bearer-secret')
     expect(loadConfig().aiApiKeys.gemini).toBe('ai-secret-value')
     expect(loadCredentials()?.token).toBe('portal-bearer-secret')
-    expect(fileMode(xyvaPath('config.json'))).toBe(0o600)
-    expect(fileMode(xyvaPath('credentials.json'))).toBe(0o600)
-    expect(fileMode(xyvaPath('secret-store.key'))).toBe(0o600)
+    expectPrivateFile(xyvaPath('config.json'))
+    expectPrivateFile(xyvaPath('credentials.json'))
+    expectPrivateFile(xyvaPath('secret-store.key'))
   })
 
   it('encrypts swarm passwords and migrates plaintext v1 files', async () => {
@@ -168,18 +193,153 @@ describe('agent secret storage', () => {
     const encrypted = fs.readFileSync(filePath, 'utf8')
     expect(encrypted).not.toContain('swarm-secret-value')
     expect(await store.loadPassword(projectPath)).toBe('swarm-secret-value')
-    expect(fileMode(filePath)).toBe(0o600)
+    expectPrivateFile(filePath)
 
     const legacy = JSON.parse(encrypted)
-    fs.writeFileSync(filePath, JSON.stringify({
+    writePrivateFixture(filePath, JSON.stringify({
       ...legacy,
       version: 1,
       password: 'legacy-plaintext-password',
-    }), { mode: 0o644 })
+    }))
     expect(await store.loadPassword(projectPath)).toBe('legacy-plaintext-password')
     expect(fs.readFileSync(filePath, 'utf8')).not.toContain('legacy-plaintext-password')
-    expect(fileMode(filePath)).toBe(0o600)
+    expectPrivateFile(filePath)
     fs.rmSync(projectPath, { recursive: true, force: true })
+  })
+
+  it('never overwrites sealed swarm credentials when the master key is missing', async () => {
+    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-project-'))
+    fs.writeFileSync(path.join(projectPath, 'playwright.config.ts'), 'export default {}')
+    SecurityGuard.approveProjectRoot(projectPath)
+    const store = new AgentSwarmCredentialStore()
+    await store.save(projectPath, { username: 'qa-user', password: 'first-synthetic-password' })
+
+    const credentialsDirectory = xyvaPath('swarm-credentials')
+    const filePath = path.join(credentialsDirectory, fs.readdirSync(credentialsDirectory)[0])
+    const before = fs.readFileSync(filePath, 'utf8')
+    fs.rmSync(xyvaPath('secret-store.key'))
+
+    await expect(store.save(projectPath, { username: 'qa-user', password: 'second-synthetic-password' }))
+      .rejects.toThrow(/key is missing/i)
+    expect(fs.existsSync(xyvaPath('secret-store.key'))).toBe(false)
+    expect(fs.readFileSync(filePath, 'utf8')).toBe(before)
+    fs.rmSync(projectPath, { recursive: true, force: true })
+  })
+
+  it('does not create a new master key when only swarm data remains', async () => {
+    const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-project-'))
+    fs.writeFileSync(path.join(projectPath, 'playwright.config.ts'), 'export default {}')
+    SecurityGuard.approveProjectRoot(projectPath)
+    const store = new AgentSwarmCredentialStore()
+    await store.save(projectPath, { username: 'qa-user', password: 'swarm-only-password' })
+
+    const swarmDirectory = xyvaPath('swarm-credentials')
+    const swarmPath = path.join(swarmDirectory, fs.readdirSync(swarmDirectory)[0])
+    const before = fs.readFileSync(swarmPath, 'utf8')
+    fs.rmSync(xyvaPath('secret-store.key'))
+
+    expect(() => saveConfig({
+      aiProvider: 'openai',
+      aiApiKeys: { openai: 'new-synthetic-api-key' },
+      aiDefaultModels: { openai: 'gpt-5' },
+      flowProviderGrants: [],
+      gitlabToken: null,
+      githubToken: null,
+      youtrackToken: null,
+      port: 7900,
+    })).toThrow(/swarm data|sealed data|key is missing/i)
+    expect(fs.existsSync(xyvaPath('secret-store.key'))).toBe(false)
+    expect(fs.readFileSync(swarmPath, 'utf8')).toBe(before)
+    expect(fs.existsSync(xyvaPath('config.json'))).toBe(false)
+    fs.rmSync(projectPath, { recursive: true, force: true })
+  })
+
+  it('never replaces an invalid existing master key', () => {
+    const keyPath = xyvaPath('secret-store.key')
+    writePrivateFixture(keyPath, 'not-a-valid-master-key')
+
+    expect(() => saveCredentials({
+      token: 'synthetic-token',
+      email: 'qa@example.test',
+      expiresAt: Date.now() + 60_000,
+      portalUrl: 'https://xyva.ai',
+    })).toThrow(/key is invalid/i)
+    expect(fs.readFileSync(keyPath, 'utf8')).toBe('not-a-valid-master-key')
+    expect(fs.existsSync(xyvaPath('credentials.json'))).toBe(false)
+  })
+
+  it('refuses an existing master key with broad permissions without repairing it', () => {
+    saveCredentials({
+      token: 'first-synthetic-token',
+      email: 'qa@example.test',
+      expiresAt: Date.now() + 60_000,
+      portalUrl: 'https://xyva.ai',
+    })
+    const keyPath = xyvaPath('secret-store.key')
+    const before = fs.readFileSync(keyPath, 'utf8')
+    if (process.platform === 'win32') {
+      const icacls = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'icacls.exe')
+      execFileSync(icacls, [keyPath, '/grant', '*S-1-1-0:(R)'], { windowsHide: true, stdio: 'pipe' })
+    } else {
+      fs.chmodSync(keyPath, 0o644)
+    }
+
+    expect(() => saveCredentials({
+      token: 'second-synthetic-token',
+      email: 'qa@example.test',
+      expiresAt: Date.now() + 60_000,
+      portalUrl: 'https://xyva.ai',
+    })).toThrow(process.platform === 'win32' ? /cannot be read/i : /permissions are not restrictive/i)
+    expect(fs.readFileSync(keyPath, 'utf8')).toBe(before)
+    if (process.platform === 'win32') {
+      expect(() => readPrivateFile(keyPath)).toThrow(/cannot be read safely/i)
+    } else {
+      expect(fileMode(keyPath)).toBe(0o644)
+    }
+  })
+
+  it('refuses corrupt sealed configuration without replacing it with defaults', () => {
+    saveConfig({
+      aiProvider: 'openai',
+      aiApiKeys: { openai: 'synthetic-api-key' },
+      aiDefaultModels: { openai: 'gpt-5' },
+      flowProviderGrants: [],
+      gitlabToken: null,
+      githubToken: null,
+      youtrackToken: null,
+      port: 7900,
+    })
+    const configPath = xyvaPath('config.json')
+    const corrupted = JSON.stringify({
+      ...JSON.parse(fs.readFileSync(configPath, 'utf8')),
+      aiApiKeys: { openai: 'sealed:v1:invalid.invalid.invalid' },
+    })
+    writePrivateFixture(configPath, corrupted)
+
+    expect(() => loadConfig()).toThrow(/cannot be decrypted/i)
+    expect(() => updateConfig({ port: 7901 })).toThrow(/cannot be decrypted/i)
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(corrupted)
+  })
+
+  it('never creates a replacement master key for existing sealed data', () => {
+    saveConfig({
+      aiProvider: 'openai',
+      aiApiKeys: { openai: 'synthetic-api-key' },
+      aiDefaultModels: { openai: 'gpt-5' },
+      flowProviderGrants: [],
+      gitlabToken: null,
+      githubToken: null,
+      youtrackToken: null,
+      port: 7900,
+    })
+    const keyPath = xyvaPath('secret-store.key')
+    const configPath = xyvaPath('config.json')
+    const before = fs.readFileSync(configPath, 'utf8')
+    fs.rmSync(keyPath)
+
+    expect(() => loadConfig()).toThrow(/key is missing/i)
+    expect(fs.existsSync(keyPath)).toBe(false)
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(before)
   })
 })
 
@@ -189,7 +349,7 @@ describe('agent license integrity', () => {
     const second = createMachineId()
     expect(second).toBe(first)
     expect(JSON.parse(fs.readFileSync(xyvaPath('machine-id.json'), 'utf8')).machineId).toBe(first)
-    expect(fileMode(xyvaPath('machine-id.json'))).toBe(0o600)
+    expectPrivateFile(xyvaPath('machine-id.json'))
   })
 
   it('trusts signed claims rather than editable license metadata', () => {
@@ -248,8 +408,7 @@ describe('agent license integrity', () => {
 
   it('migrates an unverifiable v1 JWT only through a verified online refresh', async () => {
     const machineId = createMachineId()
-    fs.mkdirSync(xyvaPath(), { recursive: true })
-    fs.writeFileSync(xyvaPath('license.json'), JSON.stringify({
+    writePrivateFixture(xyvaPath('license.json'), JSON.stringify({
       version: 1,
       source: 'jwt',
       token: 'legacy.hmac.token',
@@ -288,8 +447,7 @@ describe('agent license integrity', () => {
         expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
       })).toString('base64url')
       const signature = crypto.createHmac('sha256', 'attacker-controlled-secret').update(data).digest('base64url')
-      fs.mkdirSync(xyvaPath(), { recursive: true })
-      fs.writeFileSync(xyvaPath('license.json'), JSON.stringify(`XYVA-${data}.${signature}`))
+      writePrivateFixture(xyvaPath('license.json'), JSON.stringify(`XYVA-${data}.${signature}`))
 
       expect(checkLicenseGuard()).toMatchObject({
         allowed: false,
@@ -316,26 +474,27 @@ describe('approved project filesystem boundary', () => {
 
   it('approves only validated canonical projects and blocks symlink escapes and agent secrets', async () => {
     const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-approved-project-'))
+    const outside = createExternalFixture('xyva-outside-project-', 'sentinel.txt', 'outside-project-content')
     fs.writeFileSync(path.join(projectPath, 'playwright.config.ts'), 'export default {}')
     fs.writeFileSync(path.join(projectPath, 'safe.txt'), 'safe-project-content')
-    fs.symlinkSync('/etc', path.join(projectPath, 'escape'))
+    fs.symlinkSync(outside.directory, path.join(projectPath, 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
 
     const registry = new AgentProjectRegistryService()
     const approved = await registry.addProject(projectPath)
-    expect(approved.path).toBe(fs.realpathSync(projectPath))
+    expect(approved.path).toBe(fs.realpathSync.native(projectPath))
 
     const fsService = new AgentFsService()
     await expect(fsService.readFile(path.join(projectPath, 'safe.txt'))).resolves.toBe('safe-project-content')
-    await expect(fsService.readFile(path.join(projectPath, 'escape', 'passwd'))).rejects.toThrow(/Invalid path|Unauthorized/i)
+    await expect(fsService.readFile(path.join(projectPath, 'escape', 'sentinel.txt'))).rejects.toThrow(/Invalid path|Unauthorized/i)
 
-    fs.mkdirSync(xyvaPath(), { recursive: true })
-    fs.writeFileSync(xyvaPath('credentials.json'), 'agent-secret')
+    writePrivateFixture(xyvaPath('credentials.json'), 'agent-secret')
     await expect(fsService.readFile(xyvaPath('credentials.json'))).rejects.toThrow(/Invalid path|Unauthorized/i)
   })
 
   it('rejects a project whose Playwright config is a symlink outside the candidate root', async () => {
     const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-symlink-project-'))
-    fs.symlinkSync('/etc/passwd', path.join(projectPath, 'playwright.config.ts'))
+    const outside = createExternalFixture('xyva-outside-config-', 'playwright.config.ts', 'export default {}')
+    fs.symlinkSync(outside.filePath, path.join(projectPath, 'playwright.config.ts'), 'file')
     const registry = new AgentProjectRegistryService()
 
     await expect(registry.addProject(projectPath)).rejects.toThrow(/No Playwright config/i)
@@ -344,8 +503,9 @@ describe('approved project filesystem boundary', () => {
 
   it('rejects report ingestion through a symlink outside the approved project', async () => {
     const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-report-project-'))
+    const outside = createExternalFixture('xyva-outside-report-', 'report.json', '{}')
     fs.writeFileSync(path.join(projectPath, 'playwright.config.ts'), 'export default {}')
-    fs.symlinkSync('/etc/passwd', path.join(projectPath, 'report.json'))
+    fs.symlinkSync(outside.filePath, path.join(projectPath, 'report.json'), 'file')
     SecurityGuard.approveProjectRoot(projectPath)
 
     const service = new AgentReportService({ historyPath: path.join(temporaryHome, 'report-history.json') })
@@ -426,7 +586,8 @@ describe('agent runner command boundary', () => {
 
   it('rejects a selected test file that escapes through a symlink', async () => {
     const projectPath = createApprovedProject()
-    fs.symlinkSync('/etc/passwd', path.join(projectPath, 'tests', 'escape.spec.ts'))
+    const outside = createExternalFixture('xyva-outside-test-', 'escape.spec.ts', "test('outside', async () => {})")
+    fs.symlinkSync(outside.filePath, path.join(projectPath, 'tests', 'escape.spec.ts'), 'file')
 
     const result = await new AgentRunnerService().runTests({
       ...request(projectPath),

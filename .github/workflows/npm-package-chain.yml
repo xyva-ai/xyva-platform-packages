@@ -25,8 +25,58 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build_windows_agent:
+    name: build Windows agent package
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    steps:
+      - name: Reject non-GitHub-hosted execution
+        if: runner.environment != 'github-hosted'
+        run: exit 1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Require exact public source
+        shell: pwsh
+        env:
+          APPROVED_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'xyva-ai/xyva-platform-packages') { throw 'unexpected repository' }
+          if ($env:GITHUB_REF -ne 'refs/heads/main') { throw 'release chain requires main' }
+          if ((git rev-parse HEAD).Trim() -ne $env:APPROVED_SOURCE_SHA) { throw 'source SHA mismatch' }
+          if ($env:APPROVED_SOURCE_SHA -notmatch '^[0-9a-f]{40}$') { throw 'invalid source SHA' }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.22.2"
+      - name: Build and pack Windows agent
+        shell: pwsh
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
+          npm run build --workspace @xyva/agent
+          if ($LASTEXITCODE -ne 0) { throw "Windows agent build failed with exit code $LASTEXITCODE" }
+          $binary = 'packages/agent/dist/native/win32-x64/xyva_windows_secure_store.node'
+          if (-not (Test-Path -LiteralPath $binary)) { throw 'Windows native binary missing from agent build' }
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          npm pack --workspace @xyva/agent --pack-destination release --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw "npm pack failed with exit code $LASTEXITCODE" }
+          $package = Get-ChildItem -LiteralPath release -Filter 'xyva-agent-*.tgz' | Select-Object -First 1
+          if (-not $package) { throw 'Windows agent package was not created' }
+          tar -tf $package.FullName | Select-String 'package/dist/native/win32-x64/xyva_windows_secure_store.node' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Windows agent package does not contain native binary' }
+          Get-FileHash -Algorithm SHA256 -LiteralPath $package.FullName | ConvertTo-Json | Set-Content -Encoding UTF8 release/SHA256.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: npm-agent-windows-${{ inputs.source_sha }}
+          path: release
+          if-no-files-found: error
+          retention-days: 90
+
   prepare_next:
     name: prepare-next
+    needs: [build_windows_agent]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -57,7 +107,7 @@ jobs:
           case "$RELEASE_MODE" in bootstrap) test "$TRUST_CONFIRMATION" = "BOOTSTRAP_IRREVERSIBLE" ;; oidc) test "$TRUST_CONFIRMATION" = "OIDC_TRUST_CONFIGURED" ;; *) exit 1 ;; esac
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "24.18.0"
+          node-version: "24.22.2"
           registry-url: https://registry.npmjs.org
       - run: npm install --global npm@11.21.0 --ignore-scripts --no-audit --no-fund
       - run: npm ci --ignore-scripts --no-audit --no-fund && npm run verify:public
@@ -85,7 +135,17 @@ jobs:
       - name: Pack exact immutable chain
         run: |
           mkdir release
-          for package in contracts bridge-types bridge-browser agent platform; do npm pack --workspace "@xyva/$package" --pack-destination release --ignore-scripts; done
+          for package in contracts bridge-types bridge-browser platform; do npm pack --workspace "@xyva/$package" --pack-destination release --ignore-scripts; done
+      - name: Replace agent package with verified Windows-native build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: npm-agent-windows-${{ inputs.source_sha }}
+          path: windows-agent
+      - name: Install Windows-native agent package into chain
+        run: |
+          cp windows-agent/xyva-agent-*.tgz release/
+          test "$(find release -maxdepth 1 -name 'xyva-agent-*.tgz' | wc -l)" = "1"
+          test "$(tar -tf release/xyva-agent-*.tgz | grep -c 'package/dist/native/win32-x64/xyva_windows_secure_store.node')" = "1"
           test "$(node -p "require('./packages/contracts/package.json').version")" = "0.1.0"
           test "$(node -p "require('./packages/bridge-types/package.json').version")" = "0.1.1"
           test "$(node -p "require('./packages/bridge-browser/package.json').version")" = "0.1.0"
@@ -133,7 +193,7 @@ jobs:
           XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "24.18.0"
+          node-version: "24.22.2"
           registry-url: https://registry.npmjs.org
       - run: npm install --global npm@11.21.0 --ignore-scripts --no-audit --no-fund
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -179,7 +239,7 @@ jobs:
           XYVA_NPM_ENVIRONMENT_GUARD: ${{ vars.XYVA_NPM_ENVIRONMENT_GUARD }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: "24.18.0"
+          node-version: "24.22.2"
           registry-url: https://registry.npmjs.org
       - run: npm install --global npm@11.21.0 --ignore-scripts --no-audit --no-fund
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
