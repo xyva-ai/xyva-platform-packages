@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-04",
+  "result": "XYVA_CLI_TECHNICALLY_COMPLETE_EXTERNAL_GATES_PENDING",
+  "repositories": {
+    "platformPackages": {
+      "branch": "codex/provider-cli-bridge-v1",
+      "head": "2043894457fce8a1787d650984fd5e316a4dd231",
+      "pullRequest": 23,
+      "ci": [{"runId": 41803233030, "result": "PASS", "scope": "public Node 22/24 verification"}]
+    },
+    "qaStudio": {
+      "branch": "codex/qa-studio-cli-bridge-integration",
+      "head": "158adabb3302f69ad4b9ac269255e313e895e461",
+      "pullRequest": 137,
+      "ci": [
+        {"runId": 41794619559, "result": "PASS", "scope": "hosted agent/security/docs/portal E2E"}
+      ]
+    }
+  },
+  "gates": {
+    "registryDiscoveryVersion": "PASS",
+    "safeProcessLifecycle": "PASS_LOCAL_SCOPED",
+    "providerCliBridgeV1": "PASS_LOCAL_SCOPED",
+    "macosCompatibility": "PASS_SCOPED",
+    "qaStudioPackageIntegration": "PASS_SCOPED_HOSTED",
+    "windowsHostedCompatibility": "PASS_SCOPED_WINDOWS_SERVER_2025",
+    "nativeWindows11": "NOT_EXECUTED",
+    "flowIntegration": "PARTIAL_ADAPTER_RUNTIME_COMPOSITION_PENDING",
+    "browserE2E": "PASS_HOSTED_SCOPED_NOT_LIVE_PROVIDER",
+    "providerCompliance": "PARTIAL_EXTERNAL_REVIEW",
+    "managedUpdates": "PASS_LOCAL_FAIL_CLOSED_MANIFEST_API_EXTERNAL_SOURCE_PENDING",
+    "humanSecurityReview": "NOT_EXECUTED"
+  },
+  "releaseReady": false,
+  "windowsCliCompatibility": {
+    "pullRequest": 16,
+    "head": "1628bb47ecb7c8c02532ddfd92eb075486da340a",
+    "runId": 41797366842,
+    "result": "PASS",
+    "platform": "Windows Server 2025 x64",
+    "node": "22"
+  }
+}

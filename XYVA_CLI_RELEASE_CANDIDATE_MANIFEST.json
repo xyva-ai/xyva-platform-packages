@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "artifact": "xyva-cli-release-candidate",
+  "status": "XYVA_CLI_TECHNICALLY_COMPLETE_EXTERNAL_GATES_PENDING",
+  "source": {
+    "platformPackages": {"branch": "codex/provider-cli-bridge-v1", "head": "2043894457fce8a1787d650984fd5e316a4dd231", "pr": 23},
+    "qaStudio": {"branch": "codex/qa-studio-cli-bridge-integration", "head": "158adabb3302f69ad4b9ac269255e313e895e461", "pr": 137},
+    "windowsCompatibility": {"branch": "codex/ai-cli-adapters", "head": "1628bb47ecb7c8c02532ddfd92eb075486da340a", "pr": 16}
+  },
+  "evidence": {
+    "platformHostedRun": 41803233030,
+    "qaHostedRun": 41794619559,
+    "windowsHostedRun": 41797366842
+  },
+  "sha256Binding": "NOT_APPLICABLE_SOURCE_MANIFEST_ONLY",
+  "providerInference": "NOT_EXECUTED",
+  "nativeWindows11": "NOT_EXECUTED",
+  "mergeReleaseDeployment": "NOT_PERFORMED",
+  "localEvidence": {"targetedAdapterLifecycle": "PASS", "verifyPublic": "PASS", "hostedRunSource": "previous-head-until-new-CI"},
+  "knownExternalGates": [
+    "trusted native Windows 11 target",
+    "authenticated QA browser E2E",
+    "independent human security review",
+    "provider-authorized commercial operating modes"
+  ]
+}

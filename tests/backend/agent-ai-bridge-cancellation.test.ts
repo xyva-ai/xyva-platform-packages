@@ -42,8 +42,11 @@ const stateDirectories: string[] = []
 const previousStateDirectory = process.env.XYVA_AGENT_STATE_DIR
 
 function configureLocalProvider(): void {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-ai-cancel-'))
-  stateDirectories.push(directory)
+  // On Windows the native store must create the state directory itself so it
+  // can install a non-inheriting DACL before any private data is written.
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'xyva-ai-cancel-'))
+  const directory = path.join(parent, 'state')
+  stateDirectories.push(parent)
   process.env.XYVA_AGENT_STATE_DIR = directory
   saveProviderConfiguration({ providerId: 'ollama', defaultModel: 'gemma3:4b' })
   setFlowProviderGrant('ollama', true)

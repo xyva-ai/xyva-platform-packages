@@ -3,9 +3,27 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { getAgentDataRoot } from './utils/platform.js'
+import { loadWindowsSecureStore, type WindowsSecureStoreAddon, type WindowsSecureStoreRoot } from './windows-secure-store.js'
 
 const SEALED_PREFIX = 'sealed:v1:'
 const MASTER_KEY_BYTES = 32
+
+export type SecureStoreErrorCode =
+  | 'XYVA_MASTER_KEY_INVALID'
+  | 'XYVA_MASTER_KEY_UNREADABLE'
+  | 'XYVA_SECRET_INVALID'
+  | 'XYVA_SECRET_UNSEAL_FAILED'
+  | 'XYVA_PRIVATE_PATH_UNSAFE'
+
+export class SecureStoreError extends Error {
+  readonly code: SecureStoreErrorCode
+
+  constructor(code: SecureStoreErrorCode, message: string) {
+    super(message)
+    this.name = 'SecureStoreError'
+    this.code = code
+  }
+}
 
 function getMasterKeyPath(): string {
   return path.join(getSecureDataRoot(), 'secret-store.key')
@@ -15,28 +33,150 @@ function getSecureDataRoot(): string {
   return getAgentDataRoot()
 }
 
-function enforcePrivatePermissions(filePath: string): void {
+function nativeErrorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && typeof (error as { code?: unknown }).code === 'string'
+    ? (error as { code: string }).code
+    : undefined
+}
+
+function windowsRootFor(filePath: string): { addon: WindowsSecureStoreAddon; root: WindowsSecureStoreRoot; leaf: string } {
+  const dataRoot = path.resolve(getSecureDataRoot())
+  const target = path.resolve(filePath)
+  const relative = path.relative(dataRoot, target)
+  const components = relative.split(path.sep).filter(Boolean)
+  if (path.isAbsolute(relative) || components.length < 1 || components.length > 2 || components.some((component) => component === '.' || component === '..')) {
+    throw new SecureStoreError('XYVA_PRIVATE_PATH_UNSAFE', 'Windows private path is outside the secure data root.')
+  }
+  const leaf = components.at(-1)!
+  if (!leaf || leaf === '.' || leaf === '..') {
+    throw new SecureStoreError('XYVA_PRIVATE_PATH_UNSAFE', 'Windows private file name is invalid.')
+  }
+  const addon = loadWindowsSecureStore()
+  let root = addon.ensureTrustedRoot(dataRoot)
+  if (components.length === 2) {
+    const directory = components[0]
+    try {
+      root = addon.openPrivateDirectory(root, directory)
+    } catch (error) {
+      if (nativeErrorCode(error) !== 'XYVA_NOT_FOUND') throw error
+      addon.createPrivateDirectory(root, directory)
+      root = addon.openPrivateDirectory(root, directory)
+    }
+  }
+  return { addon, root, leaf }
+}
+
+function hasExistingSwarmData(): boolean {
+  const swarmDirectory = path.join(getSecureDataRoot(), 'swarm-credentials')
+  if (process.platform === 'win32') {
+    const addon = loadWindowsSecureStore()
+    const root = addon.ensureTrustedRoot(getSecureDataRoot())
+    try {
+      const swarmRoot = addon.openPrivateDirectory(root, 'swarm-credentials')
+      return addon.hasPrivateDirectoryEntries(swarmRoot)
+    } catch (error) {
+      if (nativeErrorCode(error) === 'XYVA_NOT_FOUND') return false
+      throw new SecureStoreError('XYVA_SECRET_INVALID', 'Swarm credential directory cannot be inspected safely.')
+    }
+  }
+
   try {
-    fs.chmodSync(filePath, 0o600)
-  } catch {
-    // Windows ACLs are enforced by the current user profile; chmod is best-effort there.
+    assertPrivateDirectory(swarmDirectory)
+    return fs.readdirSync(swarmDirectory, { withFileTypes: true }).length > 0
+  } catch (error) {
+    if (isNotFound(error)) return false
+    if (error instanceof SecureStoreError) throw error
+    throw new SecureStoreError('XYVA_SECRET_INVALID', 'Swarm credential directory cannot be inspected safely.')
   }
 }
 
-function readMasterKey(): Buffer | null {
+function enforcePrivatePermissions(filePath: string): void {
+  if (process.platform === 'win32') return
+  fs.chmodSync(filePath, 0o600)
+}
+
+function isNotFound(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'
+}
+
+function assertPrivatePath(filePath: string): void {
   try {
-    const raw = fs.readFileSync(getMasterKeyPath(), 'utf8').trim()
-    const decoded = Buffer.from(raw, 'base64url')
-    return decoded.length === MASTER_KEY_BYTES ? decoded : null
-  } catch {
-    return null
+    if (fs.lstatSync(filePath).isSymbolicLink()) {
+      throw new SecureStoreError('XYVA_PRIVATE_PATH_UNSAFE', 'Private store path must not be a symbolic link.')
+    }
+  } catch (error) {
+    if (isNotFound(error)) return
+    throw error
   }
+}
+
+function assertPrivateMode(filePath: string, expectedMode: number): void {
+  const stat = fs.statSync(filePath)
+  if ((stat.mode & 0o077) !== 0 || (stat.mode & 0o700) !== expectedMode) {
+    throw new SecureStoreError('XYVA_PRIVATE_PATH_UNSAFE', 'Private store permissions are not restrictive enough.')
+  }
+}
+
+function assertPrivateDirectory(directory: string): void {
+  assertPrivatePath(directory)
+  assertPrivateMode(directory, 0o700)
+}
+
+function assertPrivateFile(filePath: string): void {
+  assertPrivatePath(filePath)
+  assertPrivateMode(filePath, 0o600)
+}
+
+function readMasterKey(): Buffer | null {
+  const filePath = getMasterKeyPath()
+  if (process.platform === 'win32') {
+    const { addon, root, leaf } = windowsRootFor(filePath)
+    let raw: string
+    try {
+      raw = addon.readPrivateFile(root, leaf).toString('utf8').trim()
+    } catch (error) {
+      if (nativeErrorCode(error) === 'XYVA_NOT_FOUND') return null
+      throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key cannot be read.')
+    }
+    const decoded = Buffer.from(raw, 'base64url')
+    if (decoded.length !== MASTER_KEY_BYTES || decoded.toString('base64url') !== raw) {
+      throw new SecureStoreError('XYVA_MASTER_KEY_INVALID', 'The xyva secret-store key is invalid.')
+    }
+    return decoded
+  }
+  let raw: string
+  try {
+    assertPrivateFile(filePath)
+    raw = fs.readFileSync(filePath, 'utf8').trim()
+  } catch (error) {
+    if (isNotFound(error)) return null
+    if (error instanceof SecureStoreError) throw error
+    throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key cannot be read.')
+  }
+
+  const decoded = Buffer.from(raw, 'base64url')
+  if (decoded.length !== MASTER_KEY_BYTES || decoded.toString('base64url') !== raw) {
+    throw new SecureStoreError('XYVA_MASTER_KEY_INVALID', 'The xyva secret-store key is invalid.')
+  }
+  return decoded
 }
 
 function createMasterKey(): Buffer {
   const directory = getSecureDataRoot()
   const filePath = getMasterKeyPath()
+  if (process.platform === 'win32') {
+    const { addon, root, leaf } = windowsRootFor(filePath)
+    const key = crypto.randomBytes(MASTER_KEY_BYTES)
+    try {
+      addon.createPrivateFile(root, leaf, Buffer.from(key.toString('base64url'), 'utf8'))
+      return key
+    } catch (error) {
+      if (nativeErrorCode(error) !== 'XYVA_ALREADY_EXISTS') throw error
+      return readMasterKey() || (() => { throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key disappeared during creation.') })()
+    }
+  }
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+  assertPrivateDirectory(directory)
 
   const key = crypto.randomBytes(MASTER_KEY_BYTES)
   try {
@@ -52,22 +192,32 @@ function createMasterKey(): Buffer {
       throw error
     }
 
-    const existing = readMasterKey()
-    if (!existing) {
-      throw new Error('The xyva secret-store key is unreadable or invalid.')
-    }
-    return existing
+    return readMasterKey() || (() => { throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key disappeared during creation.') })()
   }
 }
 
 function getMasterKey(): Buffer {
   const existing = readMasterKey()
   if (existing) {
-    enforcePrivatePermissions(getMasterKeyPath())
     return existing
   }
 
+  for (const fileName of ['credentials.json', 'config.json']) {
+    const raw = readPrivateFile(path.join(getSecureDataRoot(), fileName))
+    if (raw?.includes(SEALED_PREFIX)) {
+      throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key is missing while sealed data exists.')
+    }
+  }
+  if (hasExistingSwarmData()) {
+    throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key is missing while swarm data exists.')
+  }
   return createMasterKey()
+}
+
+function getExistingMasterKeyForUnseal(): Buffer {
+  const existing = readMasterKey()
+  if (existing) return existing
+  throw new SecureStoreError('XYVA_MASTER_KEY_UNREADABLE', 'The xyva secret-store key is missing for sealed data.')
 }
 
 export function isSealedSecret(value: string): boolean {
@@ -91,35 +241,89 @@ export function unsealSecret(value: string, context: string): string | null {
 
   const parts = value.slice(SEALED_PREFIX.length).split('.')
   if (parts.length !== 3) {
-    return null
+    throw new SecureStoreError('XYVA_SECRET_INVALID', 'Stored secret format is invalid.')
   }
 
   try {
     const [iv, tag, encrypted] = parts
-    const decipher = crypto.createDecipheriv('aes-256-gcm', getMasterKey(), Buffer.from(iv, 'base64url'))
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getExistingMasterKeyForUnseal(), Buffer.from(iv, 'base64url'))
     decipher.setAAD(Buffer.from(context, 'utf8'))
     decipher.setAuthTag(Buffer.from(tag, 'base64url'))
     return Buffer.concat([
       decipher.update(Buffer.from(encrypted, 'base64url')),
       decipher.final(),
     ]).toString('utf8')
-  } catch {
-    return null
+  } catch (error) {
+    if (error instanceof SecureStoreError) throw error
+    throw new SecureStoreError('XYVA_SECRET_UNSEAL_FAILED', 'Stored secret cannot be decrypted.')
   }
 }
 
 export function writePrivateFile(filePath: string, content: string): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 })
+  if (process.platform === 'win32') {
+    const { addon, root, leaf } = windowsRootFor(filePath)
+    const temporaryLeaf = `.xyva-${process.pid}-${crypto.randomBytes(12).toString('hex')}.tmp`
+    try {
+      addon.createPrivateFile(root, temporaryLeaf, Buffer.from(content, 'utf8'))
+      addon.replacePrivateFile(root, temporaryLeaf, leaf)
+    } catch (error) {
+      addon.deletePrivateFile(root, temporaryLeaf)
+      throw error
+    }
+    return
+  }
+  const directory = path.dirname(filePath)
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 })
+  assertPrivateDirectory(directory)
+  assertPrivatePath(filePath)
   const temporaryPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`
 
   try {
     fs.writeFileSync(temporaryPath, content, { encoding: 'utf8', mode: 0o600 })
     enforcePrivatePermissions(temporaryPath)
+    assertPrivateFile(temporaryPath)
     fs.renameSync(temporaryPath, filePath)
-    enforcePrivatePermissions(filePath)
+    assertPrivateFile(filePath)
   } finally {
     if (fs.existsSync(temporaryPath)) {
       fs.rmSync(temporaryPath, { force: true })
     }
+  }
+}
+
+export function readPrivateFile(filePath: string): string | null {
+  if (process.platform === 'win32') {
+    const { addon, root, leaf } = windowsRootFor(filePath)
+    try {
+      return addon.readPrivateFile(root, leaf).toString('utf8')
+    } catch (error) {
+      if (nativeErrorCode(error) === 'XYVA_NOT_FOUND') return null
+      throw new SecureStoreError('XYVA_SECRET_INVALID', 'Private file cannot be read safely.')
+    }
+  }
+  try {
+    assertPrivateFile(filePath)
+    return fs.readFileSync(filePath, 'utf8')
+  } catch (error) {
+    if (isNotFound(error)) return null
+    if (error instanceof SecureStoreError) throw error
+    throw new SecureStoreError('XYVA_SECRET_INVALID', 'Private file cannot be read safely.')
+  }
+}
+
+export function deletePrivateFile(filePath: string): void {
+  if (process.platform === 'win32') {
+    const { addon, root, leaf } = windowsRootFor(filePath)
+    try { addon.deletePrivateFile(root, leaf) } catch (error) {
+      if (nativeErrorCode(error) !== 'XYVA_NOT_FOUND') throw error
+    }
+    return
+  }
+  try {
+    assertPrivateFile(filePath)
+    fs.rmSync(filePath, { force: true })
+  } catch (error) {
+    if (isNotFound(error)) return
+    throw new SecureStoreError('XYVA_SECRET_INVALID', `Private file cannot be removed safely: ${(error as Error).message}`)
   }
 }
