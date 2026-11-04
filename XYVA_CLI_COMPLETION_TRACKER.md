@@ -11,13 +11,13 @@ Status values are evidence-based as of the current isolated CLI worktree.
 | CLI-04 | ProviderCliBridgeV1 | platform-packages | IMPLEMENTED / locally verified | three-provider versioned contracts, per-provider grants, dispatch and cancellation tests | QA capability, persisted grant and local test mode |
 | CLI-05 | CLI lifecycle / updates | platform-packages | PARTIAL | status/list/doctor/update-guidance/matrix exist | no approved managed installer/update/rollback yet |
 | CLI-06 | Existing API/local provider regression | platform-packages | VERIFIED (historical) | public verification reports | rerun after integration changes |
-| CLI-07 | Windows hosted compatibility | platform-packages | BLOCKED | PR #16 has failed Windows checks; no native Windows rerun in this workstream | platform-neutral correction and controlled rerun |
+| CLI-07 | Windows hosted compatibility | platform-packages | VERIFIED (hosted scoped) | PR #16 head `1628bb47`; Windows Server 2025 Node 22 run `41797366842` PASS, including exact-SHA, fake-process, provider-boundary, public build/typecheck/regression and evidence gates | native Windows 11 remains separate |
 | CLI-08 | Native Windows 11 CLI | platform-packages | NOT_EXECUTED | no trusted target evidence | external trusted Windows 11 target |
-| CLI-09 | QA Studio product/browser E2E | qa-studio | IN_PROGRESS | Draft PR #137 at `d985470`; portal build and browser identity test pass; full authenticated CLI browser E2E not executed | package-line CI and authenticated agent session |
+| CLI-09 | QA Studio product/browser E2E | qa-studio | VERIFIED (hosted scoped) | Draft PR #137 head `158adabb`; hosted run `41794619559` PASS for agent, security, docs and portal E2E; focused suite 15 passed, 2 platform skips | authenticated live-agent/provider session remains external |
 | CLI-10 | Flow integration | xyva-flow | NOT_EXECUTED / out of current confirmed scope | generic ProviderBridgeV1 only; no CLI boundary | explicit product composition decision; no parallel engine |
 | CLI-11 | Entitlements, grants and audit | platform-packages | PARTIAL | non-secret per-provider local grant + QA capability contract | product identity/licensing integration verification pending |
 | CLI-12 | Provider compliance | cross-provider | PARTIAL | documented operational boundary; default deny and no session extraction | current provider terms and real execution mode must be independently verified |
-| CLI-13 | Release candidate evidence | cross-repository | IN_PROGRESS | platform PR #23 at `96a481d`; QA Studio PR #137 at `d985470`; hosted CI pending/partially verified | requires all scoped tests and external gates documented |
+| CLI-13 | Release candidate evidence | cross-repository | VERIFIED (scoped) | platform PR #23 at `7cc64d0`, run `41794990307`; QA Studio PR #137 at `158adabb`, run `41794619559`; PR #16 Windows run `41797366842` | native device, human review and commercial/external gates remain |
 
 ## Current external gates
 
@@ -40,14 +40,18 @@ Status values are evidence-based as of the current isolated CLI worktree.
   The commands were `provider cli status --json`, `provider cli doctor`, and
   reporting-only `provider cli update`. No login, inference, installation, or
   update was performed.
-- Platform Packages draft PR #23 head `96a481dd48b101fc6badd6b54ae2bc427c8fdc9b`:
-  the cross-socket request-ID namespace fix is committed and pushed. The prior
-  GitHub-hosted Node 22/24 run `41791139547` completed successfully at the
-  preceding head; follow-up public-verification run `41793971112` completed
-  successfully on Node 22 and Node 24. This is package compatibility evidence,
-  not Windows 11 device acceptance or real-provider evidence.
-- QA Studio draft PR #137 head `d985470`:
-  local contracts/bridge/agent checks, focused provider CLI suite (28 passed,
-  2 platform skips), portal Next build, and portal browser identity test (14
-  passed) completed successfully. Hosted CI run `41793691520` was triggered;
-  its final conclusion must be recorded before release-candidate closure.
+- Platform Packages draft PR #23 head `7cc64d0`: the cross-socket request-ID
+  namespace fix and release-candidate evidence are committed and pushed. Public
+  verification run `41794990307` completed successfully on Node 22 and Node 24.
+  This is package compatibility evidence, not Windows 11 device acceptance or
+  real-provider evidence.
+- QA Studio draft PR #137 head `158adabb3302f69ad4b9ac269255e313e895e461`: local
+  contracts/bridge/agent checks, focused provider CLI suite (15 passed, 2
+  platform skips), portal build and browser identity tests completed successfully.
+  Hosted run `41794619559` completed PASS for agent, security, docs and portal
+  E2E. The run's E2E is hosted/synthetic and does not prove a live provider
+  session.
+- Platform Packages PR #16 head `1628bb47ecb7c8c02532ddfd92eb075486da340a`:
+  Windows Server 2025 Node 22 run `41797366842` completed PASS, including the
+  Windows fake-process suite, provider-boundary regressions, public build,
+  typecheck, regression and complete evidence gate.
