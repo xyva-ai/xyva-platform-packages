@@ -130,6 +130,14 @@ describe('agent provider configuration', () => {
     expect(() => setFlowProviderGrant('openai', false)).toThrow(/refusing to overwrite/i)
     expect(() => deleteProviderConfiguration('openai')).toThrow(/refusing to overwrite/i)
     expect(fs.readFileSync(configPath, 'utf8')).toBe(malformed)
-    expect(fs.statSync(configPath).mode & 0o777).toBe(0o600)
+    expectPrivateFile(configPath)
   })
 })
+
+function expectPrivateFile(filePath: string) {
+  const stat = fs.statSync(filePath)
+  expect(stat.isFile()).toBe(true)
+  // POSIX mode bits are not a Windows security boundary. Native Windows
+  // DACL enforcement is covered by the dedicated secure-store suite.
+  if (process.platform !== 'win32') expect(stat.mode & 0o777).toBe(0o600)
+}

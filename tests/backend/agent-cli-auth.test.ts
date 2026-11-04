@@ -56,9 +56,17 @@ describe("agent CLI authentication gate", () => {
     })
     expect(credentials.token).toMatch(/^sealed:v1:/)
     expect(fs.readFileSync(path.join(tempHome, ".xyva", "credentials.json"), "utf8")).not.toContain("ci-secret-token")
-    expect(fs.statSync(path.join(tempHome, ".xyva", "credentials.json")).mode & 0o777).toBe(0o600)
+    expectPrivateFile(path.join(tempHome, ".xyva", "credentials.json"))
   })
 })
+
+function expectPrivateFile(filePath: string) {
+  const stat = fs.statSync(filePath)
+  expect(stat.isFile()).toBe(true)
+  // POSIX mode bits are not a Windows security boundary. Native Windows
+  // DACL enforcement is covered by the dedicated secure-store suite.
+  if (process.platform !== "win32") expect(stat.mode & 0o777).toBe(0o600)
+}
 
 function runAgent(args: string[], env: NodeJS.ProcessEnv) {
   return new Promise<{ code: number | null; output: string }>((resolve, reject) => {

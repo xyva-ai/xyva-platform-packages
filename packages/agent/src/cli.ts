@@ -13,6 +13,7 @@ import {
   setFlowProviderGrantFromCli,
 } from './provider-cli.js'
 import { startServer } from './server.js'
+import { CliAdapterRegistry } from './providers/cli-registry.js'
 import { AGENT_VERSION } from './version.js'
 
 const program = new Command()
@@ -135,6 +136,45 @@ providerCommand
         `key=${key}`,
         `flow=${status.flowGranted ? 'granted' : 'denied'}`,
       ].join(' '))
+    }
+  })
+
+const providerCliCommand = providerCommand
+  .command('cli')
+  .description('Inspect official AI CLI installations without reading provider credentials')
+
+providerCliCommand
+  .command('status')
+  .description('Show secret-free discovery and compatibility status for official AI CLIs')
+  .option('--json', 'Print machine-readable JSON')
+  .action(async (options) => {
+    const statuses = await new CliAdapterRegistry().status()
+    if (options.json) {
+      console.log(JSON.stringify(statuses, null, 2))
+      return
+    }
+    for (const status of statuses) {
+      console.log([
+        status.providerId,
+        `installed=${status.installed ? 'yes' : 'no'}`,
+        `version=${status.version.installedVersion || 'missing'}`,
+        `supported=${status.version.supported ? 'yes' : 'no'}`,
+        `auth=${status.authentication}`,
+        `ready=${status.readiness}`,
+      ].join(' '))
+    }
+  })
+
+providerCliCommand
+  .command('doctor')
+  .description('Run the same non-destructive CLI discovery checks with human-readable guidance')
+  .action(async () => {
+    const statuses = await new CliAdapterRegistry().status()
+    for (const status of statuses) {
+      console.log(`${status.displayName}: ${status.detail}`)
+      if (!status.installed) console.log(`  Install: ${status.installCommand}`)
+      else if (!status.version.supported && status.version.updateCommand) console.log(`  Update guidance: ${status.version.updateCommand}`)
+      else if (status.authentication === 'not_authenticated' && status.loginCommand) console.log(`  Login: ${status.loginCommand}`)
     }
   })
 
