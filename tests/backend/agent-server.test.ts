@@ -18,6 +18,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 import WebSocket from "ws"
 
+import { writePrivateFile } from "../../packages/agent/src/secure-store.js"
+
 const PORT = 7902
 const BASE = `http://127.0.0.1:${PORT}`
 const WS_BASE = `ws://127.0.0.1:${PORT}`
@@ -212,11 +214,14 @@ beforeAll(async () => {
   await startMockPortal()
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "xyva-agent-test-"))
   // Pre-seed credentials so the CLI does not try the loginFlow listener.
-  fs.mkdirSync(path.join(tmpHome, ".xyva"), { recursive: true, mode: 0o700 })
+  const previousHome = process.env.HOME
+  const previousUserProfile = process.env.USERPROFILE
+  process.env.HOME = tmpHome
+  process.env.USERPROFILE = tmpHome
   const machineId = crypto.randomUUID()
   signedLicenseToken = signTestLicense(machineId)
-  fs.writeFileSync(path.join(tmpHome, ".xyva", "machine-id.json"), JSON.stringify({ version: 1, machineId }), { mode: 0o600 })
-  fs.writeFileSync(path.join(tmpHome, ".xyva", "license.json"), JSON.stringify({
+  writePrivateFile(path.join(tmpHome, ".xyva", "machine-id.json"), JSON.stringify({ version: 1, machineId }))
+  writePrivateFile(path.join(tmpHome, ".xyva", "license.json"), JSON.stringify({
     version: 2,
     source: "jwt",
     token: signedLicenseToken,
@@ -226,18 +231,18 @@ beforeAll(async () => {
     offlineSince: null,
     machineId,
     portalUrl: mockPortalUrl,
-  }), { mode: 0o600 })
+  }))
   const creds = {
     token: "test-fixture-token-not-real",
     email: "fixture@xyva.test",
     expiresAt: Date.now() + 60 * 60 * 1000,
     portalUrl: mockPortalUrl,
   }
-  fs.writeFileSync(
-    path.join(tmpHome, ".xyva", "credentials.json"),
-    JSON.stringify(creds, null, 2),
-    { mode: 0o600 },
-  )
+  writePrivateFile(path.join(tmpHome, ".xyva", "credentials.json"), JSON.stringify(creds, null, 2))
+  if (previousHome === undefined) delete process.env.HOME
+  else process.env.HOME = previousHome
+  if (previousUserProfile === undefined) delete process.env.USERPROFILE
+  else process.env.USERPROFILE = previousUserProfile
 
   const env = {
     ...process.env,

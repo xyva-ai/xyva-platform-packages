@@ -56,7 +56,9 @@ describe("agent CLI authentication gate", () => {
     })
     expect(credentials.token).toMatch(/^sealed:v1:/)
     expect(fs.readFileSync(path.join(tempHome, ".xyva", "credentials.json"), "utf8")).not.toContain("ci-secret-token")
-    expect(fs.statSync(path.join(tempHome, ".xyva", "credentials.json")).mode & 0o777).toBe(0o600)
+    if (process.platform !== "win32") {
+      expect(fs.statSync(path.join(tempHome, ".xyva", "credentials.json")).mode & 0o777).toBe(0o600)
+    }
   })
 })
 
