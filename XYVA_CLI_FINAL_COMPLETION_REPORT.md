@@ -22,8 +22,8 @@ Overall result: `XYVA_CLI_TECHNICALLY_COMPLETE_EXTERNAL_GATES_PENDING`
 Platform Packages draft PR #23:
 
 - branch `codex/provider-cli-bridge-v1`
-- head `2043894457fce8a1787d650984fd5e316a4dd231`
-- public verification run `41803233030`: Node 22 and Node 24 PASS
+- head `05df36982fdd4d0e5fb067a853f453a8805a9018`
+- public verification run `41809275438`: Node 22 and Node 24 PASS
 - implementation commits `30494bf8034123f249d539f48d993ba42c7754cb`,
   `605942944fd5d390b857871e5a6c4b70bc85d083` and
   `2043894457fce8a1787d650984fd5e316a4dd231`: targeted adapter/lifecycle tests
@@ -71,6 +71,8 @@ Local evidence on the isolated branches:
   `codex/flow-cli-runtime-bridge`; its authenticated client is not composed into
   the default runtime, so production Flow execution remains fail-closed.
 - Local CLI grant and revoke operations now emit secret-free agent audit entries.
+- Flow commit `89559f3d838f1debd8df917486bd819ffd40cf4f` passed typecheck and
+  the full test suite (215 PASS, 1 documented PostgreSQL skip).
 - Real authenticated provider sessions and commercial usage authorization remain
   intentionally untested.
 

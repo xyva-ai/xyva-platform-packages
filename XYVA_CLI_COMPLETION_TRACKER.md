@@ -62,3 +62,9 @@ Status values are evidence-based as of the current isolated CLI worktree.
   integrity/rollback fields, and explicit Flow composition boundary. Local
   targeted adapter/lifecycle tests passed (20/20), bridge contract tests passed
   (15/15), and `npm run verify:public` passed (190 passed, 5 documented skips).
+- Platform Packages entitlement/audit follow-up commit
+  `05df36982fdd4d0e5fb067a853f453a8805a9018` added secret-free grant/revoke
+  audit evidence; hosted run `41809275438` passed on Node 22 and Node 24.
+- Flow branch `codex/flow-cli-runtime-bridge`, head
+  `89559f3d838f1debd8df917486bd819ffd40cf4f`, passed typecheck and the full
+  test suite (215 PASS, 1 documented PostgreSQL skip).

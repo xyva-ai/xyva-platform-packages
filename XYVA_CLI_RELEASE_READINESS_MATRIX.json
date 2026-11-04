@@ -5,9 +5,9 @@
   "repositories": {
     "platformPackages": {
       "branch": "codex/provider-cli-bridge-v1",
-      "head": "2043894457fce8a1787d650984fd5e316a4dd231",
+      "head": "05df36982fdd4d0e5fb067a853f453a8805a9018",
       "pullRequest": 23,
-      "ci": [{"runId": 41803233030, "result": "PASS", "scope": "public Node 22/24 verification"}]
+      "ci": [{"runId": 41809275438, "result": "PASS", "scope": "public Node 22/24 verification"}]
     },
     "qaStudio": {
       "branch": "codex/qa-studio-cli-bridge-integration",
@@ -16,6 +16,12 @@
       "ci": [
         {"runId": 41794619559, "result": "PASS", "scope": "hosted agent/security/docs/portal E2E"}
       ]
+    },
+    "flow": {
+      "branch": "codex/flow-cli-runtime-bridge",
+      "head": "89559f3d838f1debd8df917486bd819ffd40cf4f",
+      "ci": [],
+      "local": {"typecheck": "PASS", "tests": "215_PASS_1_DOCUMENTED_SKIP"}
     }
   },
   "gates": {
