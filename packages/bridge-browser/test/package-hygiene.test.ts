@@ -21,7 +21,10 @@ describe('published browser package hygiene', () => {
   })
 
   it('includes the Apache license, notice, readme and built entry in the tarball', () => {
-    const result = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+    // Windows exposes npm through npm.cmd; keep the same packaging assertion
+    // while resolving the platform-native executable explicitly.
+    const npmExecutable = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+    const result = execFileSync(npmExecutable, ['pack', '--dry-run', '--json'], {
       cwd: packageRoot,
       encoding: 'utf8',
     })
