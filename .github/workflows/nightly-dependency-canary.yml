@@ -150,6 +150,13 @@ jobs:
           New-Item -ItemType Directory -Path $target -Force | Out-Null
           Copy-Item -LiteralPath $binary.Path -Destination (Join-Path $target 'xyva_windows_secure_store.node') -Force
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $target 'xyva_windows_secure_store.node')).Hash.ToLowerInvariant()
+          npm pack --workspace @xyva/agent --pack-destination $target --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw "Windows agent package failed with exit code $LASTEXITCODE" }
+          $package = Get-ChildItem -LiteralPath $target -Filter 'xyva-agent-*.tgz' | Select-Object -First 1
+          if (-not $package) { throw 'Windows agent package missing' }
+          tar -tf $package.FullName | Select-String 'package/dist/native/win32-x64/xyva_windows_secure_store.node' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Windows agent package does not contain native binary' }
+          $packageHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $package.FullName).Hash.ToLowerInvariant()
           $manifest = [ordered]@{
             schemaVersion = 1
             commitSha = (git rev-parse HEAD).Trim()
@@ -157,6 +164,8 @@ jobs:
             platform = 'win32-x64'
             artifact = 'xyva_windows_secure_store.node'
             sha256 = $hash
+            package = $package.Name
+            packageSha256 = $packageHash
             promotion = 'STAGING_ONLY'
           }
           $manifest | ConvertTo-Json | Set-Content -Encoding UTF8 (Join-Path $target 'native-binary-manifest.json')
