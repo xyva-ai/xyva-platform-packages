@@ -7,15 +7,15 @@ Status values are evidence-based as of the current isolated CLI worktree.
 |---|---|---|---|---|---|
 | CLI-01 | Registry, discovery and version matrix | platform-packages | VERIFIED (scoped) | three CLI discovery paths, trusted resolver and version-matrix tests | no provider calls during discovery |
 | CLI-02 | Codex fake-process adapter lifecycle | platform-packages | VERIFIED (scoped) | request IDs, timeout, limits, cancellation-during-discovery and fake-process tests | real inference/commercial use default-deny |
-| CLI-03 | Claude and Gemini task adapters | platform-packages | PARTIAL | Claude fixed stdin/no-tool fake-process profile; Gemini discovery and explicit fail-closed gate | Gemini no-tool/config/session and provider-compliance evidence remain external |
+| CLI-03 | Claude and Gemini task adapters | platform-packages | VERIFIED (synthetic / product-gated) | Claude and Gemini fixed stdin/no-tool fake-process profiles; Gemini plan+sandbox profile and parser tests | Gemini product bridge remains default-deny pending independent sandbox/compliance evidence |
 | CLI-04 | ProviderCliBridgeV1 | platform-packages | IMPLEMENTED / locally verified | three-provider versioned contracts, per-provider grants, dispatch and cancellation tests | QA capability, persisted grant and local test mode |
-| CLI-05 | CLI lifecycle / updates | platform-packages | PARTIAL | status/list/doctor/update-guidance/matrix exist | no approved managed installer/update/rollback yet |
+| CLI-05 | CLI lifecycle / updates | platform-packages | IMPLEMENTED / locally verified | signed-manifest validation, SHA-256 verification, consent gate, versioned install, rollback slot and fail-closed lifecycle tests | no provider-specific signed manifest/source is configured; production update remains disabled |
 | CLI-06 | Existing API/local provider regression | platform-packages | VERIFIED (historical) | public verification reports | rerun after integration changes |
 | CLI-07 | Windows hosted compatibility | platform-packages | VERIFIED (hosted scoped) | PR #16 head `1628bb47`; Windows Server 2025 Node 22 run `41797366842` PASS, including exact-SHA, fake-process, provider-boundary, public build/typecheck/regression and evidence gates | native Windows 11 remains separate |
 | CLI-08 | Native Windows 11 CLI | platform-packages | NOT_EXECUTED | no trusted target evidence | external trusted Windows 11 target |
 | CLI-09 | QA Studio product/browser E2E | qa-studio | VERIFIED (hosted scoped) | Draft PR #137 head `158adabb`; hosted run `41794619559` PASS for agent, security, docs and portal E2E; focused suite 15 passed, 2 platform skips | authenticated live-agent/provider session remains external |
 | CLI-10 | Flow integration | xyva-flow | NOT_EXECUTED / out of current confirmed scope | generic ProviderBridgeV1 only; no CLI boundary | explicit product composition decision; no parallel engine |
-| CLI-11 | Entitlements, grants and audit | platform-packages | PARTIAL | non-secret per-provider local grant + QA capability contract | product identity/licensing integration verification pending |
+| CLI-11 | Entitlements, grants and audit | platform-packages | PARTIAL | non-secret per-provider local grant + QA capability contract; bridge rejects missing/revoked grants | product identity/licensing integration and independent audit review pending |
 | CLI-12 | Provider compliance | cross-provider | PARTIAL | documented operational boundary; default deny and no session extraction | current provider terms and real execution mode must be independently verified |
 | CLI-13 | Release candidate evidence | cross-repository | VERIFIED (scoped) | platform PR #23 candidate `919c067`, run `41799057447`; QA Studio PR #137 at `158adabb`, run `41794619559`; PR #16 Windows run `41797366842` | native device, human review and commercial/external gates remain |
 
@@ -28,9 +28,10 @@ Status values are evidence-based as of the current isolated CLI worktree.
 - Real provider authentication/inference requires documented commercial and
   provider-authorized operating modes; no session extraction or account use is
   permitted.
-- Managed lifecycle updates require a separately approved immutable-source,
-  integrity, consent and rollback design; the implemented command is guidance
-  only and intentionally mutates nothing.
+- Managed lifecycle code now provides a signed-manifest, integrity, consent and
+  rollback boundary for local artifacts. No provider-specific manifest/source is
+  configured, so the public update command remains guidance-only and mutates
+  nothing.
 
 ## Executed evidence
 
@@ -55,3 +56,8 @@ Status values are evidence-based as of the current isolated CLI worktree.
   Windows Server 2025 Node 22 run `41797366842` completed PASS, including the
   Windows fake-process suite, provider-boundary regressions, public build,
   typecheck, regression and complete evidence gate.
+- Platform Packages local implementation commit `30494bf8034123f249d539f48d993ba42c7754cb`:
+  Gemini fixed-profile adapter tests, signed lifecycle manager tests, status
+  integrity/rollback fields, and explicit Flow composition boundary. Local
+  targeted adapter/lifecycle tests passed (20/20), bridge contract tests passed
+  (15/15), and `npm run verify:public` passed (190 passed, 5 documented skips).

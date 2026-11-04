@@ -5,7 +5,7 @@
   "repositories": {
     "platformPackages": {
       "branch": "codex/provider-cli-bridge-v1",
-      "head": "919c067",
+      "head": "30494bf8034123f249d539f48d993ba42c7754cb",
       "pullRequest": 23,
       "ci": [{"runId": 41799057447, "result": "PASS", "scope": "public Node 22/24 verification"}]
     },
@@ -29,7 +29,7 @@
     "flowIntegration": "NOT_EXECUTED_OUT_OF_CONFIRMED_SCOPE",
     "browserE2E": "PASS_HOSTED_SCOPED_NOT_LIVE_PROVIDER",
     "providerCompliance": "PARTIAL_EXTERNAL_REVIEW",
-    "managedUpdates": "PARTIAL_GUIDANCE_ONLY",
+    "managedUpdates": "PASS_LOCAL_FAIL_CLOSED_MANIFEST_API_EXTERNAL_SOURCE_PENDING",
     "humanSecurityReview": "NOT_EXECUTED"
   },
   "releaseReady": false,

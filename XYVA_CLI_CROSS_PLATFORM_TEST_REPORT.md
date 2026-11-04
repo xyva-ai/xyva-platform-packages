@@ -12,4 +12,6 @@
 | Native Windows 11 | NOT_EXECUTED | No trusted Windows 11 target was used |
 | Flow CLI E2E | NOT_EXECUTED / out of confirmed scope | Flow Alpha exposes a contract-only bridge and no workflow execution path |
 | Real provider inference | NOT_EXECUTED | Explicitly prohibited without separate authorization |
+| Gemini synthetic fixed-profile adapter | PASS (local) | Commit `30494bf`; JSON parser, plan/sandbox args, isolated HOME and bounded process tests |
+| Managed lifecycle API | PASS (local fail-closed) | Commit `30494bf`; signed-manifest, hash, consent, rollback and tamper tests |
 

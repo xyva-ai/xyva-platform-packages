@@ -12,8 +12,10 @@ Overall result: `XYVA_CLI_TECHNICALLY_COMPLETE_EXTERNAL_GATES_PENDING`
   reporting, provider dispatch and socket-scoped cancellation.
 - QA Studio integration on draft PR #137 (`158adabb`), including a read-only
   status panel and synthetic test control that remains default-deny.
-- Read-only lifecycle commands (`provider cli status/list/doctor/update`) with
-  update guidance only; no installer or automatic update is performed.
+- Signed-manifest lifecycle manager with SHA-256 verification, explicit consent,
+  versioned install, rollback slot and fail-closed update behavior. The public
+  `provider cli status/list/doctor/update` surface remains non-mutating until a
+  provider-specific signed source is configured.
 
 ## Evidence
 
@@ -22,6 +24,9 @@ Platform Packages draft PR #23:
 - branch `codex/provider-cli-bridge-v1`
 - head `919c067`
 - public verification run `41799057447`: Node 22 and Node 24 PASS
+- current local implementation commit `30494bf8034123f249d539f48d993ba42c7754cb`:
+  targeted adapter/lifecycle tests 20/20 PASS; bridge contract tests 15/15 PASS;
+  `npm run verify:public` 190 PASS, 5 documented platform skips.
 
 QA Studio draft PR #137:
 
@@ -55,7 +60,11 @@ Local evidence on the isolated branches:
 - Flow has no confirmed CLI product scope; no second Flow engine was added.
 - Real provider authentication/inference, commercial operating modes and
   independent human security review remain external gates.
-- Managed provider installation/update/rollback remains guidance-only by design.
+- Managed provider installation/update/rollback is implemented as a fail-closed
+  signed-manifest API and locally verified, but no provider-specific signed
+  distribution manifest/source is configured for production use.
+- Flow runtime execution remains explicitly out of scope; see
+  `XYVA_CLI_FLOW_COMPOSITION_BOUNDARY.md`.
 - Real authenticated provider sessions and commercial usage authorization remain
   intentionally untested.
 
