@@ -40,9 +40,9 @@ Status values are evidence-based as of the current isolated CLI worktree.
   The commands were `provider cli status --json`, `provider cli doctor`, and
   reporting-only `provider cli update`. No login, inference, installation, or
   update was performed.
-- Platform Packages draft PR #23 head `7cc64d0`: the cross-socket request-ID
+- Platform Packages draft PR #23 head `c0f0e32`: the cross-socket request-ID
   namespace fix and release-candidate evidence are committed and pushed. Public
-  verification run `41794990307` completed successfully on Node 22 and Node 24.
+  verification run `41797937754` completed successfully on Node 22 and Node 24.
   This is package compatibility evidence, not Windows 11 device acceptance or
   real-provider evidence.
 - QA Studio draft PR #137 head `158adabb3302f69ad4b9ac269255e313e895e461`: local
