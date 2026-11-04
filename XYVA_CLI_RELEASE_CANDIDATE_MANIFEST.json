@@ -3,12 +3,12 @@
   "artifact": "xyva-cli-release-candidate",
   "status": "XYVA_CLI_TECHNICALLY_COMPLETE_EXTERNAL_GATES_PENDING",
   "source": {
-    "platformPackages": {"branch": "codex/provider-cli-bridge-v1", "head": "30494bf8034123f249d539f48d993ba42c7754cb", "pr": 23},
+    "platformPackages": {"branch": "codex/provider-cli-bridge-v1", "head": "605942944fd5d390b857871e5a6c4b70bc85d083", "pr": 23},
     "qaStudio": {"branch": "codex/qa-studio-cli-bridge-integration", "head": "158adabb3302f69ad4b9ac269255e313e895e461", "pr": 137},
     "windowsCompatibility": {"branch": "codex/ai-cli-adapters", "head": "1628bb47ecb7c8c02532ddfd92eb075486da340a", "pr": 16}
   },
   "evidence": {
-    "platformHostedRun": 41799382393,
+    "platformHostedRun": 41802969955,
     "qaHostedRun": 41794619559,
     "windowsHostedRun": 41797366842
   },
