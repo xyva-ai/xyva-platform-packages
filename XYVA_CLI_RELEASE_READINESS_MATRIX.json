@@ -4,17 +4,26 @@
   "result": "XYVA_CLI_TECHNICALLY_COMPLETE_EXTERNAL_GATES_PENDING",
   "repositories": {
     "platformPackages": {
-      "branch": "codex/provider-cli-bridge-v1",
-      "head": "605942944fd5d390b857871e5a6c4b70bc85d083",
-      "pullRequest": 23,
-      "ci": [{"runId": 41802969955, "result": "PASS", "scope": "public Node 22/24 verification"}]
+      "branch": "codex/cli-discovery-and-win11-parent-swap",
+      "head": "1bbe3b3775a7a230572c9d7f947161a0702aca4e",
+      "pullRequest": 24,
+      "ci": [{"runId": 42089125348, "result": "PASS", "scope": "public Node 22/24 verification"}]
     },
     "qaStudio": {
-      "branch": "codex/qa-studio-cli-bridge-integration",
-      "head": "158adabb3302f69ad4b9ac269255e313e895e461",
-      "pullRequest": 137,
+      "branch": "codex/deep-review-fixes",
+      "head": "7fcc8dbe0afcfe47e1f49fbd0984eefb5e3f8321",
+      "pullRequest": 139,
       "ci": [
-        {"runId": 41794619559, "result": "PASS", "scope": "hosted agent/security/docs/portal E2E"}
+        {"runId": 42087866196, "result": "PASS", "scope": "hosted agent/security/docs/portal E2E"},
+        {"runId": 42086602294, "result": "PASS", "scope": "bounded native Windows 11 CLI acceptance"}
+      ]
+    },
+    "flow": {
+      "branch": "codex/flow-cli-runtime-bridge",
+      "head": "fda07b4249837fd7efb83ac75aef7ce419f7d30f",
+      "pullRequest": 53,
+      "ci": [
+        {"runId": 42089776798, "result": "PASS", "scope": "Node 22/24, web, public export, container and PostgreSQL integration"}
       ]
     }
   },
@@ -25,8 +34,8 @@
     "macosCompatibility": "PASS_SCOPED",
     "qaStudioPackageIntegration": "PASS_SCOPED_HOSTED",
     "windowsHostedCompatibility": "PASS_SCOPED_WINDOWS_SERVER_2025",
-    "nativeWindows11": "NOT_EXECUTED",
-    "flowIntegration": "NOT_EXECUTED_OUT_OF_CONFIRMED_SCOPE",
+    "nativeWindows11": "PASS_BOUNDED_VM100_SCOPE",
+    "flowIntegration": "PASS_HOSTED_SCOPED_OPT_IN",
     "browserE2E": "PASS_HOSTED_SCOPED_NOT_LIVE_PROVIDER",
     "providerCompliance": "PARTIAL_EXTERNAL_REVIEW",
     "managedUpdates": "PASS_LOCAL_FAIL_CLOSED_MANIFEST_API_EXTERNAL_SOURCE_PENDING",
