@@ -5,9 +5,9 @@
   "repositories": {
     "platformPackages": {
       "branch": "codex/cli-discovery-and-win11-parent-swap",
-      "head": "1bbe3b3775a7a230572c9d7f947161a0702aca4e",
+      "head": "d4663f925e9cfc68cf75d90fb2c4a296333dc3da",
       "pullRequest": 24,
-      "ci": [{"runId": 42089125348, "result": "PASS", "scope": "public Node 22/24 verification"}]
+      "ci": [{"runId": 42090975511, "result": "PASS", "scope": "public Node 22/24 verification with patched dependency baseline"}]
     },
     "qaStudio": {
       "branch": "codex/deep-review-fixes",

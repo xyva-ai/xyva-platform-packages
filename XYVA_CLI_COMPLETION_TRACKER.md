@@ -17,7 +17,7 @@ Status values are evidence-based as of the current isolated CLI worktree.
 | CLI-10 | Flow integration | xyva-flow | VERIFIED (local and hosted scoped) | Draft PR #53 head `fda07b4`; CI run `42089776798` PASS on Node 22/24, web, public-export, container and PostgreSQL integration; CLI adapter remains opt-in | authenticated runtime agent pairing and production composition remain external |
 | CLI-11 | Entitlements, grants and audit | platform-packages | PARTIAL | non-secret per-provider local grant + QA capability contract; bridge rejects missing/revoked grants | product identity/licensing integration and independent audit review pending |
 | CLI-12 | Provider compliance | cross-provider | PARTIAL | documented operational boundary; default deny and no session extraction | current provider terms and real execution mode must be independently verified |
-| CLI-13 | Release candidate evidence | cross-repository | VERIFIED (scoped) | platform PR #24 head `1bbe3b3`, run `42089125348`; QA Studio PR #139 head `7fcc8db`, run `42087866196` plus native run `42086602294`; Flow PR #53 head `fda07b4`, run `42089776798` | human review, provider compliance and production authorization remain |
+| CLI-13 | Release candidate evidence | cross-repository | VERIFIED (scoped) | platform PR #24 head `d4663f9`, run `42090975511`; QA Studio PR #139 head `7fcc8db`, run `42087866196` plus native run `42086602294`; Flow PR #53 head `fda07b4`, run `42089776798` | human review, provider compliance and production authorization remain |
 
 ## Current external gates
 
@@ -42,9 +42,11 @@ Status values are evidence-based as of the current isolated CLI worktree.
   The commands were `provider cli status --json`, `provider cli doctor`, and
   reporting-only `provider cli update`. No login, inference, installation, or
   update was performed.
-- Platform Packages draft PR #24 head `1bbe3b3775a7a230572c9d7f947161a0702aca4e`:
-  discovery/auth boundary and Windows parent-swap PowerShell fallback. Public
-  verification run `42089125348` completed successfully on Node 22 and Node 24.
+- Platform Packages draft PR #24 head `d4663f925e9cfc68cf75d90fb2c4a296333dc3da`:
+  discovery/auth boundary, Windows parent-swap PowerShell fallback and patched
+  runtime dependency baseline. Public verification run `42090975511` completed
+  successfully on Node 22 and Node 24; `npm audit --omit=dev` reports 0
+  vulnerabilities.
 - QA Studio draft PR #139 head `7fcc8dbe0afcfe47e1f49fbd0984eefb5e3f8321`:
   native run `42086602294` PASS and standard CI run `42087866196` PASS. Native
   evidence is bounded and synthetic; it does not prove a live provider session.
