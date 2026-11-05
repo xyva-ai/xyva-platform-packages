@@ -174,7 +174,7 @@ providerCliCommand
   .command('doctor')
   .description('Run the same non-destructive CLI discovery checks with human-readable guidance')
   .action(async () => {
-    const statuses = await new CliAdapterRegistry().status()
+    const statuses = await new CliAdapterRegistry().status({ checkAuthentication: true })
     for (const status of statuses) {
       console.log(`${status.displayName}: ${status.detail}`)
       console.log(`  Integrity: ${status.version.integrityStatus}; rollback=${status.version.rollbackAvailable ? 'available' : 'not-available'}; latest=${status.version.latestSupportedVersion || 'unknown'}`)

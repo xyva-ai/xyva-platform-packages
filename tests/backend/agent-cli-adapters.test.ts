@@ -78,19 +78,30 @@ describe('official CLI adapter discovery', () => {
 
     const status = await new CliAdapterRegistry(adapterMap).status()
     expect(status).toMatchObject([
-      { providerId: 'codex', installed: true, executable: true, version: { installedVersion: '0.162.1', supported: true }, authentication: 'authenticated' },
+      { providerId: 'codex', installed: true, executable: true, version: { installedVersion: '0.162.1', supported: true }, authentication: 'not_checked', readiness: 'authentication_unknown' },
       { providerId: 'claude', installed: false, readiness: 'unavailable' },
       { providerId: 'gemini', installed: true, executable: true, version: { installedVersion: '0.64.0', supported: true } },
     ])
-    expect(calls.every((call) => call.args.join(' ') === '--version' || call.args.join(' ') === 'login status')).toBe(true)
+    expect(calls.every((call) => call.args.join(' ') === '--version')).toBe(true)
     expect(calls.every((call) => call.stdin === undefined)).toBe(true)
+  })
+
+  it('runs authentication checks only when explicitly requested by Doctor/readiness', async () => {
+    const calls: Parameters<CliProcessRunner['run']>[0][] = []
+    const adapterMap = adapters(fakeRunner(async (input) => {
+      calls.push(input)
+      return readyDiscoveryResult(input) || { exitCode: 1, stdout: '', stderr: 'not authenticated', timedOut: false, cancelled: false }
+    }))
+    const status = await new CliAdapterRegistry(adapterMap).status({ checkAuthentication: true })
+    expect(status.find((item) => item.providerId === 'codex')).toMatchObject({ authentication: 'authenticated', readiness: 'ready' })
+    expect(calls.some((call) => call.args.join(' ') === 'login status')).toBe(true)
   })
 
   it('marks an unreadable or obsolete version unsupported without exposing stderr', async () => {
     const adapter = adapters(fakeRunner(async () => ({
       exitCode: 0, stdout: 'codex-cli dev-build', stderr: 'sensitive-session-value', timedOut: false, cancelled: false,
     }))).get('codex')!
-    const status = await adapter.discover()
+    const status = await adapter.discover(undefined, { checkAuthentication: true })
     expect(status.version.supported).toBe(false)
     expect(JSON.stringify(status)).not.toContain('sensitive-session-value')
   })
@@ -202,7 +213,7 @@ describe('provider-specific official CLI execution profiles', () => {
       ? { exitCode: 0, stdout: 'claude 2.1.259', stderr: '', timedOut: false, cancelled: false }
       : { exitCode: 1, stdout: '', stderr: 'credential=/private/value', timedOut: false, cancelled: false }
     )).get('claude')!
-    const status = await adapter.discover()
+    const status = await adapter.discover(undefined, { checkAuthentication: true })
     expect(status).toMatchObject({ authentication: 'not_authenticated', readiness: 'login_required' })
     expect(JSON.stringify(status)).not.toContain('/private/value')
   })
