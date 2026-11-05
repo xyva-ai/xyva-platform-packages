@@ -12,7 +12,10 @@ import {
   providerStatusesForCli,
   setFlowProviderGrantFromCli,
 } from './provider-cli.js'
+import { setQaCliProviderGrant } from './config.js'
+import { CLI_PROVIDER_IDS } from './providers/cli-types.js'
 import { startServer } from './server.js'
+import { CliAdapterRegistry } from './providers/cli-registry.js'
 import { AGENT_VERSION } from './version.js'
 
 const program = new Command()
@@ -136,6 +139,86 @@ providerCommand
         `flow=${status.flowGranted ? 'granted' : 'denied'}`,
       ].join(' '))
     }
+  })
+
+const providerCliCommand = providerCommand
+  .command('cli')
+  .description('Inspect official AI CLI installations without reading provider credentials')
+
+providerCliCommand
+  .command('status')
+  .description('Show secret-free discovery and compatibility status for official AI CLIs')
+  .option('--json', 'Print machine-readable JSON')
+  .action(async (options) => {
+    const statuses = await new CliAdapterRegistry().status()
+    if (options.json) {
+      console.log(JSON.stringify(statuses, null, 2))
+      return
+    }
+    for (const status of statuses) {
+      console.log([
+        status.providerId,
+        `installed=${status.installed ? 'yes' : 'no'}`,
+        `version=${status.version.installedVersion || 'missing'}`,
+        `supported=${status.version.supported ? 'yes' : 'no'}`,
+        `latest=${status.version.latestSupportedVersion || 'unknown'}`,
+        `auth=${status.authentication}`,
+        `integrity=${status.version.integrityStatus}`,
+        `rollback=${status.version.rollbackAvailable ? 'yes' : 'no'}`,
+        `ready=${status.readiness}`,
+      ].join(' '))
+    }
+  })
+
+providerCliCommand
+  .command('doctor')
+  .description('Run the same non-destructive CLI discovery checks with human-readable guidance')
+  .action(async () => {
+    const statuses = await new CliAdapterRegistry().status({ checkAuthentication: true })
+    for (const status of statuses) {
+      console.log(`${status.displayName}: ${status.detail}`)
+      console.log(`  Integrity: ${status.version.integrityStatus}; rollback=${status.version.rollbackAvailable ? 'available' : 'not-available'}; latest=${status.version.latestSupportedVersion || 'unknown'}`)
+      if (!status.installed) console.log(`  Install: ${status.installCommand}`)
+      else if (!status.version.supported && status.version.updateCommand) console.log(`  Update guidance: ${status.version.updateCommand}`)
+      else if (status.authentication === 'not_authenticated' && status.loginCommand) console.log(`  Login: ${status.loginCommand}`)
+    }
+  })
+
+providerCliCommand
+  .command('list')
+  .description('Alias for secret-free official CLI status')
+  .option('--json', 'Print machine-readable JSON')
+  .action(async (options) => {
+    const statuses = await new CliAdapterRegistry().status()
+    console.log(options.json ? JSON.stringify(statuses, null, 2) : statuses.map((status) => `${status.providerId} ${status.readiness}`).join('\n'))
+  })
+
+providerCliCommand
+  .command('update')
+  .description('Show consent-required update guidance; this agent never mutates global CLI installations')
+  .argument('[provider]', 'codex, claude, or gemini')
+  .action(async (provider) => {
+    if (provider !== undefined && !CLI_PROVIDER_IDS.includes(provider)) throw new Error('Unknown official CLI provider')
+    const statuses = await new CliAdapterRegistry().status()
+    for (const status of statuses.filter((candidate) => provider === undefined || candidate.providerId === provider)) {
+      const guidance = status.version.updateCommand || 'No approved update command is recorded.'
+      console.log(`${status.providerId}: no update executed; installation=${status.installationKind || 'missing'}; guidance=${guidance}`)
+    }
+  })
+
+providerCliCommand
+  .command('grant')
+  .description('Locally grant or revoke QA Studio access to one isolated official CLI adapter')
+  .argument('<provider>', 'codex, claude, or gemini')
+  .requiredOption('--product <product>', 'Product receiving the local grant (qa-studio)')
+  .option('--revoke', 'Revoke instead of grant')
+  .option('--yes', 'Confirm this local bridge consent change')
+  .action((provider, options) => {
+    if (!CLI_PROVIDER_IDS.includes(provider) || options.product !== 'qa-studio' || options.yes !== true) {
+      throw new Error('CLI bridge grant requires a supported provider, qa-studio and --yes')
+    }
+    const granted = setQaCliProviderGrant(provider, options.revoke !== true)
+    console.log(chalk.green(granted ? `Granted ${provider} CLI bridge to QA Studio.` : `Revoked ${provider} CLI bridge from QA Studio.`))
   })
 
 providerCommand

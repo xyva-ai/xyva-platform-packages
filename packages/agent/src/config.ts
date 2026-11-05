@@ -1,5 +1,4 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -9,16 +8,17 @@ import type {
   AgentProviderConfigurationSaveRequest,
   AgentProviderConfigurationStatus,
 } from '@xyva/bridge-types'
-import { PROVIDER_IDS_V1, type ProviderIdV1 } from '@xyva/contracts'
+import { CLI_PROVIDER_IDS_V1, PROVIDER_IDS_V1, type CliProviderIdV1, type ProviderIdV1 } from '@xyva/contracts'
 
 import { getXyvaDir } from './auth.js'
-import { isSealedSecret, sealSecret, unsealSecret, writePrivateFile } from './secure-store.js'
+import { isSealedSecret, readPrivateFile, sealSecret, SecureStoreError, unsealSecret, writePrivateFile } from './secure-store.js'
 
 export interface AgentConfig {
   aiProvider: ProviderIdV1 | null
   aiApiKeys: Record<string, string>
   aiDefaultModels: Partial<Record<ProviderIdV1, string>>
   flowProviderGrants: ProviderIdV1[]
+  qaCliProviderGrants: CliProviderIdV1[]
   gitlabToken: string | null
   githubToken: string | null
   youtrackToken: string | null
@@ -30,6 +30,7 @@ type StoredAgentConfig = {
   aiApiKeys: Record<string, string>
   aiDefaultModels: Partial<Record<ProviderIdV1, string>>
   flowProviderGrants: ProviderIdV1[]
+  qaCliProviderGrants: CliProviderIdV1[]
   gitlabToken: string | null
   githubToken: string | null
   youtrackToken: string | null
@@ -41,6 +42,7 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   aiApiKeys: {},
   aiDefaultModels: {},
   flowProviderGrants: [],
+  qaCliProviderGrants: [],
   gitlabToken: null,
   githubToken: null,
   youtrackToken: null,
@@ -48,7 +50,7 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
 }
 
 function defaultAgentConfig(): AgentConfig {
-  return { ...DEFAULT_AGENT_CONFIG, aiApiKeys: {}, aiDefaultModels: {}, flowProviderGrants: [] }
+  return { ...DEFAULT_AGENT_CONFIG, aiApiKeys: {}, aiDefaultModels: {}, flowProviderGrants: [], qaCliProviderGrants: [] }
 }
 
 function getConfigPath() {
@@ -106,6 +108,11 @@ function normalizeProviderGrants(value: unknown): ProviderIdV1[] {
   return PROVIDER_IDS_V1.filter((providerId) => value.includes(providerId))
 }
 
+function normalizeCliProviderGrants(value: unknown): CliProviderIdV1[] {
+  if (!Array.isArray(value)) return []
+  return CLI_PROVIDER_IDS_V1.filter((providerId) => value.includes(providerId))
+}
+
 function encryptValue(value: string, field: string) {
   return sealSecret(value, configSecretContext(field))
 }
@@ -134,7 +141,12 @@ function decryptLegacyValue(value: string) {
 
 function decryptValue(value: string, field: string) {
   if (!isSealedSecret(value)) {
-    return value.startsWith('aes:') ? decryptLegacyValue(value) : value
+    if (!value.startsWith('aes:')) return value
+    const decrypted = decryptLegacyValue(value)
+    if (decrypted === null) {
+      throw new SecureStoreError('XYVA_SECRET_UNSEAL_FAILED', `Legacy configuration secret ${field} cannot be decrypted.`)
+    }
+    return decrypted
   }
 
   return unsealSecret(value, configSecretContext(field))
@@ -148,6 +160,9 @@ function toStoredConfig(config: AgentConfig): StoredAgentConfig {
     ),
     aiDefaultModels: normalizeDefaultModels(config.aiDefaultModels),
     flowProviderGrants: normalizeProviderGrants(config.flowProviderGrants),
+    // Older in-memory callers may not yet carry this non-secret opt-in field.
+    // Absence must remain default-deny rather than breaking config persistence.
+    qaCliProviderGrants: normalizeCliProviderGrants(config.qaCliProviderGrants),
     gitlabToken: config.gitlabToken ? encryptValue(config.gitlabToken, 'gitlab') : null,
     githubToken: config.githubToken ? encryptValue(config.githubToken, 'github') : null,
     youtrackToken: config.youtrackToken ? encryptValue(config.youtrackToken, 'youtrack') : null,
@@ -171,6 +186,7 @@ function fromStoredConfig(config: Partial<StoredAgentConfig> | null | undefined)
       : {}),
     aiDefaultModels: normalizeDefaultModels(config?.aiDefaultModels),
     flowProviderGrants: normalizeProviderGrants(config?.flowProviderGrants),
+    qaCliProviderGrants: normalizeCliProviderGrants(config?.qaCliProviderGrants),
     gitlabToken: typeof config?.gitlabToken === 'string' ? decryptValue(config.gitlabToken, 'gitlab') : null,
     githubToken: typeof config?.githubToken === 'string' ? decryptValue(config.githubToken, 'github') : null,
     youtrackToken: typeof config?.youtrackToken === 'string' ? decryptValue(config.youtrackToken, 'youtrack') : null,
@@ -182,13 +198,14 @@ function fromStoredConfig(config: Partial<StoredAgentConfig> | null | undefined)
 }
 
 export function loadConfig(): AgentConfig {
-  try {
-    const configPath = getConfigPath()
-    if (!fs.existsSync(configPath)) {
-      return defaultAgentConfig()
-    }
+  const configPath = getConfigPath()
+  const raw = readPrivateFile(configPath)
+  if (raw === null) {
+    return defaultAgentConfig()
+  }
 
-    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Partial<StoredAgentConfig>
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredAgentConfig>
     const config = fromStoredConfig(parsed)
     const containsLegacySecrets = [
       ...Object.values(parsed.aiApiKeys || {}),
@@ -202,27 +219,23 @@ export function loadConfig(): AgentConfig {
 
     if (containsLegacySecrets || containsNonCanonicalProviderKeys) {
       writePrivateFile(configPath, JSON.stringify(toStoredConfig(config), null, 2))
-    } else {
-      try {
-        fs.chmodSync(configPath, 0o600)
-      } catch {
-        // Best-effort on platforms where POSIX modes are not available.
-      }
     }
 
     return config
-  } catch {
-    return defaultAgentConfig()
+  } catch (error) {
+    if (error instanceof SecureStoreError) throw error
+    throw new SecureStoreError('XYVA_SECRET_INVALID', 'Stored agent configuration is unreadable; refusing to replace it.')
   }
 }
 
 function loadConfigForMutation(): AgentConfig {
   const configPath = getConfigPath()
-  if (!fs.existsSync(configPath)) return defaultAgentConfig()
+  const raw = readPrivateFile(configPath)
+  if (raw === null) return defaultAgentConfig()
 
   let parsed: Partial<StoredAgentConfig>
   try {
-    const value: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    const value: unknown = JSON.parse(raw)
     if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
       throw new Error('invalid')
     }
@@ -248,6 +261,10 @@ function loadConfigForMutation(): AgentConfig {
           || !PROVIDER_IDS_V1.includes(provider as ProviderIdV1))
         || new Set(parsed.flowProviderGrants).size !== parsed.flowProviderGrants.length) throw new Error('invalid')
     }
+    if (parsed.qaCliProviderGrants !== undefined && (!Array.isArray(parsed.qaCliProviderGrants)
+      || parsed.qaCliProviderGrants.some((provider) => typeof provider !== 'string'
+        || !CLI_PROVIDER_IDS_V1.includes(provider as CliProviderIdV1))
+      || new Set(parsed.qaCliProviderGrants).size !== parsed.qaCliProviderGrants.length)) throw new Error('invalid')
     for (const [field, value] of [
       ['gitlab', parsed.gitlabToken],
       ['github', parsed.githubToken],
@@ -317,6 +334,23 @@ export function getProviderConfigurationStatusesWithFlowGrants(): AgentProviderC
 
 export function isProviderGrantedToFlow(providerId: ProviderIdV1): boolean {
   return loadConfig().flowProviderGrants.includes(providerId)
+}
+
+/** Local, non-secret consent for the separate QA Studio CLI bridge. */
+export function isQaCliProviderGranted(providerId: unknown): boolean {
+  return typeof providerId === 'string'
+    && CLI_PROVIDER_IDS_V1.includes(providerId as CliProviderIdV1)
+    && loadConfig().qaCliProviderGrants.includes(providerId as CliProviderIdV1)
+}
+
+export function setQaCliProviderGrant(providerId: unknown, granted: unknown): boolean {
+  if (typeof providerId !== 'string' || !CLI_PROVIDER_IDS_V1.includes(providerId as CliProviderIdV1) || typeof granted !== 'boolean') throw new Error('Invalid CLI provider grant')
+  const current = loadConfigForMutation()
+  const grants = new Set(current.qaCliProviderGrants)
+  if (granted) grants.add(providerId as CliProviderIdV1)
+  else grants.delete(providerId as CliProviderIdV1)
+  saveConfig({ ...current, qaCliProviderGrants: CLI_PROVIDER_IDS_V1.filter((candidate) => grants.has(candidate)) })
+  return granted
 }
 
 export function setFlowProviderGrant(providerIdValue: unknown, grantedValue: unknown): AgentProviderConfigurationStatusWithFlowGrant {
