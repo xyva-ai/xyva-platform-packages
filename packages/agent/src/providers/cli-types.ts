@@ -31,6 +31,11 @@ export interface CliDiscoveryStatus {
   detail: string
 }
 
+export interface CliDiscoveryOptions {
+  /** Authentication commands are invasive and are only allowed for Doctor/readiness checks. */
+  checkAuthentication?: boolean
+}
+
 export interface CliInferenceRequest {
   prompt: string
   /** Caller-provided ID permits targeted cancellation; adapters generate one for isolated callers. */
@@ -84,7 +89,7 @@ export interface CliCommandResolver {
 
 export interface CliProviderAdapter {
   readonly providerId: CliProviderId
-  discover(): Promise<CliDiscoveryStatus>
+  discover(signal?: AbortSignal, options?: CliDiscoveryOptions): Promise<CliDiscoveryStatus>
   getReadiness(): Promise<CliDiscoveryStatus>
   beginLogin(): Promise<{ started: boolean; detail: string }>
   listModels(): Promise<string[]>

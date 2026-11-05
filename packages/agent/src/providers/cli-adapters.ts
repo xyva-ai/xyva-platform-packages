@@ -8,6 +8,7 @@ import { CliProcessManager } from './cli-process-manager.js'
 import { SpawnCliProcessRunner } from './cli-process-runner.js'
 import type {
   CliCommandResolver,
+  CliDiscoveryOptions,
   CliDiscoveryStatus,
   CliInferenceRequest,
   CliInferenceResult,
@@ -74,7 +75,7 @@ export class GenericCliAdapter implements CliProviderAdapter {
 
   public get providerId(): CliProviderId { return this.definition.providerId }
 
-  public async discover(signal?: AbortSignal): Promise<CliDiscoveryStatus> {
+  public async discover(signal?: AbortSignal, options: CliDiscoveryOptions = {}): Promise<CliDiscoveryStatus> {
     const resolved = await this.resolver.resolve(this.definition.command)
     if (!resolved.trusted || !resolved.executablePath) {
       return this.status(this.versions.status(this.providerId, null), false, 'unavailable', resolved.detail, null)
@@ -89,6 +90,9 @@ export class GenericCliAdapter implements CliProviderAdapter {
     const version = this.versions.status(this.providerId, installedVersion)
     if (!installedVersion) return this.status(version, false, 'unavailable', 'Trusted CLI could not be executed.', resolved.installationKind)
     if (!version.supported) return this.status(version, true, 'unsupported_version', 'Installed CLI version is outside the supported matrix.', resolved.installationKind)
+    if (options.checkAuthentication !== true) {
+      return this.status(version, true, 'authentication_unknown', 'CLI is installed; authentication was not checked.', resolved.installationKind)
+    }
     const authentication = await this.authenticationStatus(resolved.executablePath, signal)
     const readiness = authentication === 'authenticated'
       ? 'ready'
@@ -101,7 +105,7 @@ export class GenericCliAdapter implements CliProviderAdapter {
     }
   }
 
-  public async getReadiness(): Promise<CliDiscoveryStatus> { return this.discover() }
+  public async getReadiness(): Promise<CliDiscoveryStatus> { return this.discover(undefined, { checkAuthentication: true }) }
 
   public async beginLogin(): Promise<{ started: boolean; detail: string }> {
     // Device authentication is interactive; a non-TTY agent must never start or alter a user session.
@@ -123,7 +127,7 @@ export class GenericCliAdapter implements CliProviderAdapter {
     request.signal?.addEventListener('abort', abort, { once: true })
     let taskDirectory: string | undefined
     try {
-      const readiness = await this.discover(lease.signal)
+      const readiness = await this.discover(lease.signal, { checkAuthentication: true })
       if (lease.signal.aborted) throw new Error('CLI inference cancelled')
       if (!readiness.installed) throw new Error('CLI executable is unavailable or untrusted')
       if (!readiness.version.supported) throw new Error('CLI version is unsupported')
