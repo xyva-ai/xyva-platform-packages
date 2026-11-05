@@ -23,11 +23,11 @@ const lockfile = JSON.parse(
 
 describe('agent production dependency security contract', () => {
   it('pins the patched body parser used by the local Express server', () => {
-    expect(manifest.overrides?.['body-parser']).toBe('2.3.0')
+    expect(manifest.overrides?.['body-parser']).toBe('2.4.0')
     expect(lockfile.packages['node_modules/body-parser']).toMatchObject({
-      version: '2.3.0',
-      resolved: 'https://registry.npmjs.org/body-parser/-/body-parser-2.3.0.tgz',
-      integrity: 'sha512-2cGmJupaNgg+QUwVLAucDuWuoMZ6EX9iHDRswZ5lsNYEmwPaRknMPCLZz07yTzVq/83p4o/wzbDZbBrTvGGTIw==',
+      version: '2.4.0',
+      resolved: 'https://registry.npmjs.org/body-parser/-/body-parser-2.4.0.tgz',
+      integrity: 'sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==',
     })
   })
 })
