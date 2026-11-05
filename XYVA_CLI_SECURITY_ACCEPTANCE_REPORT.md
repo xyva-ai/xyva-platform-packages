@@ -13,9 +13,11 @@
   the shared process manager.
 - Process cleanup now delays completion until the termination grace/force path
   has run; the CI race found in run `41793691520` was corrected in `36c757d`.
-- Windows Server 2025 hosted compatibility is PASS-scoped on PR #16 head
-  `1628bb47`, run `41797366842`, including fake-process, provider-boundary,
-  packaging, typecheck and public regression evidence.
+- Windows Server hosted compatibility remains PASS-scoped on the prior server
+  matrix.
+- Native Windows 11 bounded acceptance is PASS-scoped on QA Studio PR #139,
+  run `42086602294`, with platform source `1bbe3b3775a7a230572c9d7f947161a0702aca4e`;
+  parent-swap 4/4, secure-store 5/5 and cleanup/evidence gates passed.
 - Gemini's synthetic adapter profile is fixed to JSON + plan + sandbox flags,
   with isolated HOME and bounded stdin/stdout. Product bridge execution remains
   default-deny until independent provider sandbox/compliance review.
@@ -25,8 +27,8 @@
 
 ## Not accepted as complete
 
-- Native Windows 11 device evidence is absent; hosted Windows Server evidence
-  is not substituted for it.
+- Native Windows 11 evidence exists only for the bounded synthetic CLI/secure-store
+  suites and is not substituted for a full provider or production acceptance.
 - The actual provider sandbox semantics and data-exfiltration resistance were
   not tested with a real provider task.
 - No provider OAuth/session files were read, and no real inference was run.
