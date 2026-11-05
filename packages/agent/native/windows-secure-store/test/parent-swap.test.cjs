@@ -23,7 +23,14 @@ if (process.platform !== 'win32') {
 
   function swapRoot(root, moved, outside) {
     const script = path.join(__dirname, 'swap-parent.ps1');
-    const output = execFileSync('pwsh.exe', [
+    // Windows 11 images may provide only inbox Windows PowerShell 5.1;
+    // keep the invocation shell-free and prefer PowerShell Core when present.
+    const shell = process.env.XYVA_POWERSHELL_EXE || (
+      fs.existsSync(path.join(process.env.ProgramFiles || '', 'PowerShell', '7', 'pwsh.exe'))
+        ? 'pwsh.exe'
+        : 'powershell.exe'
+    );
+    const output = execFileSync(shell, [
       '-NoLogo', '-NoProfile', '-NonInteractive', '-File', script,
       '-Root', root, '-Moved', moved, '-Outside', outside,
     ], { windowsHide: true, timeout: 10_000, stdio: 'pipe' }).toString('utf8');
