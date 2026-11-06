@@ -16,6 +16,14 @@ const PROVIDER_BRIDGE_V1_METHODS = new Set([
   'providerInferV1',
   'providerCancelV1',
 ])
+// This surface is intentionally separate from ProviderBridgeV1. In
+// particular, `codex` here means an already-authenticated local CLI, never an
+// OpenAI API credential selected through ProviderBridgeV1.
+const PROVIDER_CLI_BRIDGE_V1_METHODS = new Set([
+  'providerCliCapabilitiesV1',
+  'providerCliInferV1',
+  'providerCliCancelV1',
+])
 const UNAVAILABLE_METHOD_ERROR = 'Bridge method unavailable'
 
 export interface BridgeConnectionContext {
@@ -75,7 +83,7 @@ export async function handleWsMessage(ws: WebSocket, msg: unknown): Promise<void
   }
 
   const connectionContext = connectionContexts.get(ws)
-  if (!connectionContext && PROVIDER_BRIDGE_V1_METHODS.has(msg.method)) {
+  if (!connectionContext && (PROVIDER_BRIDGE_V1_METHODS.has(msg.method) || PROVIDER_CLI_BRIDGE_V1_METHODS.has(msg.method))) {
     const response: BridgeResponse = { ...responseBase, ok: false, error: UNAVAILABLE_METHOD_ERROR }
     ws.send(JSON.stringify(response))
     return
