@@ -38,6 +38,7 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
       let cancelled = false
       let outputLimitExceeded = false
       let killTimer: NodeJS.Timeout | undefined
+      let settleTimer: NodeJS.Timeout | undefined
       const terminate = (reason: 'timeout' | 'cancel' | 'output_limit') => {
         if (settled || timedOut || cancelled || outputLimitExceeded) return
         if (reason === 'timeout') timedOut = true
@@ -46,6 +47,11 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
         this.terminateProcess(child.pid, false)
         killTimer = setTimeout(() => this.terminateProcess(child.pid, true), 2_000)
         killTimer.unref()
+        // Windows process-tree termination is asynchronous and a child may
+        // keep the stdio handles open after taskkill has been requested.  Do
+        // not let the bridge lease hang forever waiting for a late close.
+        settleTimer = setTimeout(() => finish(null), 2_500)
+        settleTimer.unref()
       }
       const timeout = setTimeout(() => terminate('timeout'), input.timeoutMs)
       const onAbort = () => terminate('cancel')
@@ -54,6 +60,7 @@ export class SpawnCliProcessRunner implements CliProcessRunner {
         settled = true
         clearTimeout(timeout)
         if (killTimer) clearTimeout(killTimer)
+        if (settleTimer) clearTimeout(settleTimer)
         input.signal?.removeEventListener('abort', onAbort)
         resolve({ exitCode, stdout: stdout.value(), stderr: stderr.value(), timedOut, cancelled, outputLimitExceeded })
       }
